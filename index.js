@@ -286,10 +286,20 @@ const fiveHrReset = data.rate_limits?.five_hour?.resets_at;
 const weeklyPct = data.rate_limits?.seven_day?.used_percentage;
 const weeklyReset = data.rate_limits?.seven_day?.resets_at;
 
-// ---------- Feature toggles (env vars, set to "0" to disable) ----------
-function enabled(envVar) { return process.env[envVar] !== '0' && process.env[envVar] !== 'false'; }
-const SHOW_FUNNY = enabled('CC_SL_FUNNY');
-const SHOW_ROLLING = enabled('CC_SL_ROLLING');
+// ---------- Feature toggles ----------
+// Checked in order: toggle-state file (flip live via toggle.sh / the
+// /sl-toggle slash command, no restart needed since this whole script
+// re-runs every refreshInterval) -> env var -> default on.
+const TOGGLE_FILE = path.join(os.homedir(), '.claude', 'cc-statusline-toggles.json');
+let toggleState = {};
+try { toggleState = JSON.parse(fs.readFileSync(TOGGLE_FILE, 'utf8')); } catch (_) {}
+
+function enabled(key, envVar) {
+  if (Object.prototype.hasOwnProperty.call(toggleState, key)) return toggleState[key] !== false;
+  return process.env[envVar] !== '0' && process.env[envVar] !== 'false';
+}
+const SHOW_FUNNY = enabled('funny', 'CC_SL_FUNNY');
+const SHOW_ROLLING = enabled('rolling', 'CC_SL_ROLLING');
 
 // ---------- Build lines ----------
 const lines = [];
