@@ -4,6 +4,7 @@
 
 const fs = require('fs');
 const os = require('os');
+const path = require('path');
 const { execSync } = require('child_process');
 
 // ---------- Read stdin ----------
@@ -55,32 +56,134 @@ function progressBar(pct, width = 25) {
 }
 
 // ---------- Model-aware pricing (per million tokens) ----------
-// Sonnet 5 intro pricing ($2/$10) runs through 2026-08-31; falls back to
-// standard ($3/$15) after that. Derive cacheRead/cacheWrite as 0.1x/1.25x input.
-const SONNET_INTRO_CUTOFF = new Date('2026-08-31T23:59:59Z').getTime();
-const sonnetBase = Date.now() <= SONNET_INTRO_CUTOFF
-  ? { input: 2.00, output: 10.00 }
-  : { input: 3.00, output: 15.00 };
-
-const PRICING = {
-  // Opus 4.6 / 4.7 / 4.8
-  opus: { input: 5.00, output: 25.00, cacheRead: 0.50, cacheWrite: 6.25 },
-  // Sonnet 5 (default)
-  sonnet: {
-    ...sonnetBase,
-    cacheRead: sonnetBase.input * 0.1,
-    cacheWrite: sonnetBase.input * 1.25,
-  },
-  // Haiku 4.5
-  haiku: { input: 1.00, output: 5.00, cacheRead: 0.10, cacheWrite: 1.25 },
+// input/output/cacheRead are flat. Cache WRITES depend on the cache entry's
+// TTL: 5-minute (1.25x input) or 1-hour (2x input) — see cacheWrite5m/1h below.
+// Verified against `ccusage` (community tool reading the same transcripts):
+// Sonnet 5 bills at the same standard rate as Sonnet 4.6, not the documented
+// intro discount — cross-checked exactly on real usage data, so the intro
+// price is dropped here rather than trusted against a single doc source.
+function sonnetRate() { return { input: 3.00, output: 15.00 }; }
+const RATES = {
+  opus:   { input: 5.00, output: 25.00 },
+  sonnet: sonnetRate(),
+  haiku:  { input: 1.00, output: 5.00 },
 };
 
 function getPricing(modelId) {
-  if (!modelId) return PRICING.sonnet;
-  const id = modelId.toLowerCase();
-  if (/opus/.test(id)) return PRICING.opus;
-  if (/haiku/.test(id)) return PRICING.haiku;
-  return PRICING.sonnet;
+  const base = (() => {
+    if (!modelId) return RATES.sonnet;
+    const id = modelId.toLowerCase();
+    if (/opus/.test(id)) return RATES.opus;
+    if (/haiku/.test(id)) return RATES.haiku;
+    return RATES.sonnet;
+  })();
+  return {
+    input: base.input,
+    output: base.output,
+    cacheRead: base.input * 0.1,
+    cacheWrite5m: base.input * 1.25,
+    cacheWrite1h: base.input * 2,
+  };
+}
+
+// ---------- Weekly / monthly cost (scans local transcript history) ----------
+// Claude Code only exposes the CURRENT session's cost natively (data.cost.total_cost_usd).
+// For rolling 7d/30d totals we sum token usage across every transcript under
+// ~/.claude/projects/**/*.jsonl. Scanning that on every refresh (1s interval)
+// is too slow, so results are cached to disk for CACHE_TTL_MS.
+const USAGE_CACHE_FILE = path.join(os.tmpdir(), 'cc-statusline-usage-cache.json');
+const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+
+function costForUsage(usage, modelId) {
+  if (!usage) return 0;
+  // Historical transcripts can contain non-Claude entries (synthetic
+  // follow-ups, third-party models routed through a proxy) — they aren't
+  // billed at Claude per-token rates, so exclude rather than guess.
+  if (!modelId || !/^claude-/i.test(modelId)) return 0;
+  const p = getPricing(modelId);
+  // cache_creation breaks down by TTL when present; older/partial records
+  // may lack the breakdown — treat those as 5m (the API default TTL).
+  const cc = usage.cache_creation || {};
+  const cw1h = cc.ephemeral_1h_input_tokens || 0;
+  const cw5m = cc.ephemeral_5m_input_tokens ||
+    (cw1h === 0 ? (usage.cache_creation_input_tokens || 0) : 0);
+  return (
+    (usage.input_tokens || 0)            / 1e6 * p.input +
+    (usage.output_tokens || 0)           / 1e6 * p.output +
+    (usage.cache_read_input_tokens || 0) / 1e6 * p.cacheRead +
+    cw5m / 1e6 * p.cacheWrite5m +
+    cw1h / 1e6 * p.cacheWrite1h
+  );
+}
+
+function findTranscripts(dir) {
+  let out = [];
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return out; }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out = out.concat(findTranscripts(full));
+    else if (entry.isFile() && entry.name.endsWith('.jsonl')) out.push(full);
+  }
+  return out;
+}
+
+function scanUsageCost(sinceMonthMs, sinceWeekMs) {
+  const projectsDir = path.join(os.homedir(), '.claude', 'projects');
+  let weekCost = 0;
+  let monthCost = 0;
+  // Session resume/compaction rewrites overlapping history into new
+  // transcript files, so the same assistant message (by message.id) can
+  // appear in several files. Dedupe globally or costs get double-counted.
+  const seenMessageIds = new Set();
+
+  for (const file of findTranscripts(projectsDir)) {
+    let stat;
+    try { stat = fs.statSync(file); } catch (_) { continue; }
+    // A transcript's mtime is its last write — if that's older than the
+    // month window, every line in it is too, so skip the whole file.
+    if (stat.mtimeMs < sinceMonthMs) continue;
+
+    let content;
+    try { content = fs.readFileSync(file, 'utf8'); } catch (_) { continue; }
+
+    for (const line of content.split('\n')) {
+      if (!line) continue;
+      let entry;
+      try { entry = JSON.parse(line); } catch (_) { continue; }
+      const usage = entry.message?.usage;
+      if (!usage) continue;
+      const ts = Date.parse(entry.timestamp);
+      if (!Number.isFinite(ts) || ts < sinceMonthMs) continue;
+
+      const msgId = entry.message?.id;
+      if (msgId) {
+        if (seenMessageIds.has(msgId)) continue;
+        seenMessageIds.add(msgId);
+      }
+
+      const cost = costForUsage(usage, entry.message?.model);
+      monthCost += cost;
+      if (ts >= sinceWeekMs) weekCost += cost;
+    }
+  }
+
+  return { weekCost, monthCost };
+}
+
+function getRollingCosts() {
+  try {
+    const cached = JSON.parse(fs.readFileSync(USAGE_CACHE_FILE, 'utf8'));
+    if (Date.now() - cached.computedAt < CACHE_TTL_MS) return cached;
+  } catch (_) {}
+
+  const now = Date.now();
+  const result = {
+    ...scanUsageCost(now - 30 * 86400 * 1000, now - 7 * 86400 * 1000),
+    computedAt: now,
+  };
+  try { fs.writeFileSync(USAGE_CACHE_FILE, JSON.stringify(result)); } catch (_) {}
+  return result;
 }
 
 // ---------- Helpers ----------
@@ -160,28 +263,19 @@ try {
 
 const modelId = data.model?.id || (typeof data.model === 'string' ? data.model : '');
 const modelDisplay = data.model?.display_name || '';
-const pricing = getPricing(modelId);
 
 const ctxPct = parseFloat(data.context_window?.used_percentage ?? 0);
-const totalIn = parseInt(data.context_window?.total_input_tokens ?? 0, 10);
-const totalOut = parseInt(data.context_window?.total_output_tokens ?? 0, 10);
-const cacheRead = parseInt(data.context_window?.current_usage?.cache_read_input_tokens ?? 0, 10);
-const cacheWrite = parseInt(data.context_window?.current_usage?.cache_creation_input_tokens ?? 0, 10);
 
 // Prefer Claude Code's own cumulative cost (data.cost.total_cost_usd) — it
-// sums every turn across the whole session. context_window.*_tokens is only
-// a snapshot of the current context, not a running total, and undercounts
-// badly once turns/compactions pile up. Fall back to a per-token estimate
-// from the snapshot only when the native field is absent.
+// sums every turn across the whole session. context_window.current_usage is
+// only the last turn's usage snapshot, not a running total, and undercounts
+// badly once turns/compactions pile up. Fall back to it only when the
+// native field is absent, reusing the same TTL-aware cost math as the
+// historical scan below.
 const nativeCost = parseFloat(data.cost?.total_cost_usd);
 const sessionCost = Number.isFinite(nativeCost)
   ? nativeCost
-  : (
-      totalIn    / 1e6 * pricing.input +
-      totalOut   / 1e6 * pricing.output +
-      cacheRead  / 1e6 * pricing.cacheRead +
-      cacheWrite / 1e6 * pricing.cacheWrite
-    );
+  : costForUsage(data.context_window?.current_usage, modelId || 'claude-sonnet-5');
 
 const fiveHrPct = data.rate_limits?.five_hour?.used_percentage;
 const fiveHrReset = data.rate_limits?.five_hour?.resets_at;
@@ -191,15 +285,22 @@ const weeklyReset = data.rate_limits?.seven_day?.resets_at;
 // ---------- Build lines ----------
 const lines = [];
 
-// Line 1: cwd + git
+let funny = '';
+try {
+  funny = execSync(`bash "${path.join(__dirname, 'statusline-funny.sh')}"`,
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trimEnd();
+} catch (_) {}
+
+// Line 1: cwd + git + funny message
 let line1 = `${SL_YELLOW}📁 ${shortPath}${N}`;
 if (branch) {
   const icon = branchEmoji(branch) || DEFAULT_BRANCH_ICON;
   line1 += ` ${SL_GIT}${icon} ${branch}${N}`;
 }
+if (funny) line1 += ` ${D}|${N} ${funny}`;
 lines.push(line1);
 
-// Line 2: model + context + cost
+// Line 2: model + context + cost (session / 7d / 30d)
 let line2 = '';
 if (modelId) {
   const ms = modelDisplay || formatModel(modelId, modelDisplay);
@@ -208,7 +309,10 @@ if (modelId) {
 const ctxBar = progressBar(ctxPct);
 const ctxColor = pctColor(ctxPct);
 line2 += ` ${D}🧠${N} ${ctxBar} ${ctxColor}${fmt1(ctxPct)}%${N}`;
-line2 += ` ${D}|${N} ${D}💸${N} ${C}~$${fmtCost(sessionCost)}${N}`;
+const { weekCost, monthCost } = getRollingCosts();
+line2 += ` ${D}|${N} ${D}💰${N} ${C}~$${fmtCost(sessionCost)}${N} ${D}|${N} ` +
+  `${D}7d${N} ${C}~$${fmtCost(weekCost)}${N} ${D}|${N} ` +
+  `${D}30d${N} ${C}~$${fmtCost(monthCost)}${N}`;
 lines.push(line2);
 
 // Line 3: rate limits
@@ -227,12 +331,5 @@ if (weeklyPct != null && weeklyPct !== '') {
   if (r) line3 += ` ${D}⏱${N} ${r}`;
 }
 if (line3) lines.push(line3);
-
-// Line 4: funny message
-try {
-  const funny = execSync(`bash "${home}/.claude/statusline-funny.sh"`,
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trimEnd();
-  if (funny) lines.push(funny);
-} catch (_) {}
 
 process.stdout.write(lines.join('\n'));
