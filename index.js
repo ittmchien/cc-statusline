@@ -245,7 +245,11 @@ function branchEmoji(branchName) {
 }
 const DEFAULT_BRANCH_ICON = '';
 
-function fmt1(n) { return (Number(n) || 0).toFixed(1); }
+function fmt1(n) {
+  const v = Number(n) || 0;
+  const rounded = Math.round(v * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : v.toFixed(1);
+}
 
 function fmtCost(c) {
   c = Number(c) || 0;
