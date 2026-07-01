@@ -331,9 +331,21 @@ function rotationSlot(sessionId) {
   return Math.floor(Date.now() / JOKE_ROTATE_MS) + sessionHash(sessionId);
 }
 
+// Mix the slot number so consecutive rotations land on unrelated list
+// indices (genuinely random-looking) instead of just walking the list in
+// order — still deterministic per slot, so it stays stable within one
+// JOKE_ROTATE_MS window.
+function mixHash(n) {
+  n = Number(n) >>> 0;
+  n ^= n >>> 16; n = Math.imul(n, 0x45d9f3b);
+  n ^= n >>> 16; n = Math.imul(n, 0x45d9f3b);
+  n ^= n >>> 16;
+  return n >>> 0;
+}
+
 function pickFromList(list, slot) {
   if (!list.length) return '';
-  return list[slot % list.length];
+  return list[mixHash(slot) % list.length];
 }
 
 function fmt1(n) {
@@ -397,8 +409,6 @@ const SHOW_JOKEAPI = enabled('jokeapi', 'CC_SL_JOKEAPI');
 // ---------- Build lines ----------
 const lines = [];
 
-const JOKE_MAX_LEN = configNumber('jokeMaxLen', 'CC_SL_JOKE_MAX_LEN', 100);
-
 let funny = '';
 if (SHOW_FUNNY) {
   const sessionId = data.session_id || '';
@@ -422,16 +432,8 @@ if (SHOW_FUNNY) {
     if (!jokeText) jokeText = apiText;
   }
   if (jokeText) {
-    // Embedded newlines (JokeAPI two-part jokes, mainly) would otherwise
-    // wrap the status line onto extra lines — collapse to " | " instead.
-    jokeText = jokeText.replace(/\r\n|\r|\n/g, ' | ');
-    // Cap length so one long joke can't push the whole line past the
-    // terminal width; cut on a word boundary where possible.
-    if (jokeText.length > JOKE_MAX_LEN) {
-      const cut = jokeText.slice(0, JOKE_MAX_LEN - 1);
-      const lastSpace = cut.lastIndexOf(' ');
-      jokeText = (lastSpace > JOKE_MAX_LEN * 0.6 ? cut.slice(0, lastSpace) : cut) + '…';
-    }
+    // No collapsing or truncation — long jokes (and JokeAPI's embedded
+    // newlines) just wrap onto extra terminal lines naturally.
     funny = `\x1b[3m\x1b[38;2;230;120;80m💬 ${jokeText}${N}`;
   }
 }

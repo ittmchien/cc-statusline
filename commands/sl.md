@@ -1,6 +1,6 @@
 ---
 description: Toggle a cc-statusline section, or set a numeric interval — no restart needed
-argument-hint: '[folder|git|funny|jokeapi|model|context|session|rolling|ratelimits|cacheTtlMs|jokeTtlMs|jokeRotateMs|jokeMaxLen] [on|off|<number>]'
+argument-hint: '[folder|git|funny|jokeapi|model|context|session|rolling|ratelimits|cacheTtlMs|jokeTtlMs|jokeRotateMs] [on|off|<number>]'
 ---
 Run this and report the one-line result back to the user, terse, no extra explanation:
 
@@ -23,6 +23,5 @@ Numeric keys (pass a millisecond value):
 - `cacheTtlMs` — how long the 7d/30d cost scan is cached (default 30000)
 - `jokeTtlMs` — how long a JokeAPI batch is cached before refetching (default 900000)
 - `jokeRotateMs` — how often the joke line changes / alternates source (default 30000)
-- `jokeMaxLen` — max characters for the joke text before it's truncated with `…` (default 100)
 
 Usage: `/sl funny` (flips it), `/sl funny off` (explicit on/off), `/sl jokeRotateMs 60000` (set a number).

@@ -73,13 +73,13 @@ Same toggles also work via env vars (`CC_SL_FUNNY=0`, `CC_SL_ROLLING=0`, etc.) i
 
 ## Joke line — JokeAPI, with a privacy-conscious fetch strategy
 
-The joke line alternates every `jokeRotateMs` (default 30s) between the bundled local list (`statusline-funny.sh`) and [JokeAPI](https://jokeapi.dev) (`Programming` category, NSFW/political/religious/etc. content excluded) — offset by a hash of the session id, so concurrent chat windows land on different jokes at different points in the cycle. Since the status line reruns every `refreshInterval` (as low as every 1s), it **never calls the API on the render path** — that would spam JokeAPI and risk the caller's (hashed) IP getting rate-limited or blacklisted per [their privacy policy](https://jokeapi.dev/#footer):
+The joke line alternates every `jokeRotateMs` (default 30s) between the bundled local list (`statusline-funny.sh`) and [JokeAPI](https://jokeapi.dev) (`Programming` category, NSFW/political/religious/etc. content excluded). Which joke is picked is a hash of the rotation slot (not sequential — it won't just walk the list in order), offset by a hash of the session id so concurrent chat windows land on different jokes at different points in the cycle. Since the status line reruns every `refreshInterval` (as low as every 1s), it **never calls the API on the render path** — that would spam JokeAPI and risk the caller's (hashed) IP getting rate-limited or blacklisted per [their privacy policy](https://jokeapi.dev/#footer):
 
 - A batch of 10 jokes is cached to disk and reused for `jokeTtlMs` (default 15 minutes).
 - When the cache goes stale, a **detached background process** fetches a fresh batch and exits — the current render never waits on it and just uses whatever's cached (or the local list) for its turn in the rotation.
 - A lock file debounces concurrent statusline invocations so only one background fetch runs at a time.
 - If the API is unreachable, slow (5s timeout), or the cache isn't populated yet, that turn in the rotation falls back to the local list instead. To skip JokeAPI entirely (local jokes only, no network calls at all): `/sl jokeapi off` or `CC_SL_JOKEAPI=0`.
-- Embedded newlines in a joke's text are collapsed to ` | ` so one joke can never wrap the status line onto extra lines.
+- No truncation — a long or multi-line joke just wraps onto extra terminal lines naturally, styled consistently top to bottom.
 
 ## Toggle numeric intervals — `/sl`
 
@@ -96,7 +96,6 @@ Same `/sl` command, but for the three tunable intervals. **These already ship wi
 | `cacheTtlMs` | `30000` (30s) | How long the 7d/30d cost scan is cached before rescanning |
 | `jokeTtlMs` | `900000` (15min) | How long a batch of JokeAPI jokes is cached before refetching |
 | `jokeRotateMs` | `30000` (30s) | How often the joke line changes / alternates source |
-| `jokeMaxLen` | `100` | Max characters for the joke text before it's cut (on a word boundary where possible) with `…` |
 
 Same env-var fallback pattern as the boolean toggles: `CC_SL_CACHE_TTL_MS`, `CC_SL_JOKE_TTL_MS`, `CC_SL_JOKE_ROTATE_MS` — the toggle file takes precedence when both are set.
 
