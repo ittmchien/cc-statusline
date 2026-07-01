@@ -301,7 +301,8 @@ function maybeRefreshJokeCacheInBackground() {
         if (!data || data.error || !Array.isArray(data.jokes)) return;
         const jokes = data.jokes
           .map(j => j.type === 'single' ? j.joke : \`\${j.setup} — \${j.delivery}\`)
-          .filter(Boolean);
+          .filter(Boolean)
+          .filter(j => !/[\\r\\n]/.test(j));
         if (jokes.length) {
           require('fs').writeFileSync(${JSON.stringify(JOKE_CACHE_FILE)},
             JSON.stringify({ jokes, fetchedAt: Date.now() }));
