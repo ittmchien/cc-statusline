@@ -54,7 +54,7 @@ messages=(
   "AI wrote this comment. AI is also unsure why this function exists."
 )
 
-# Pick a message based on the current 30-second window (so it doesn't change
+# Pick a message based on the current 15-second window (so it doesn't change
 # every refresh), offset by a hash of the session id (arg1) so different
 # chat windows land on different messages instead of all showing the same one.
 session_id="${1:-}"
@@ -63,7 +63,7 @@ if [ -n "$session_id" ]; then
   session_hash=$(printf '%s' "$session_id" | cksum | awk '{print $1}')
 fi
 now_s=$(date +%s)
-window=$(( now_s / 30 ))
+window=$(( now_s / 15 ))
 idx=$(( (window + session_hash) % ${#messages[@]} ))
 msg="${messages[$idx]}"
 

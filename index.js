@@ -5,7 +5,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execSync, spawn } = require('child_process');
 
 // ---------- Read stdin ----------
 let raw = '';
@@ -245,6 +245,77 @@ function branchEmoji(branchName) {
 }
 const DEFAULT_BRANCH_ICON = '';
 
+// ---------- JokeAPI (https://v2.jokeapi.dev) — batched, cached, never blocking ----------
+// The render path is invoked every refreshInterval (as low as 1s), so it
+// NEVER makes a network call itself — that would hammer JokeAPI and risk
+// getting the caller's (hashed) IP rate-limited/blacklisted per their policy.
+// Instead: read whatever's cached; if the cache is stale, fire a detached
+// background process to refresh it (fetches a batch of 10 in one request)
+// and move on immediately. Falls back to the local joke list in
+// statusline-funny.sh whenever the cache is empty or the API is unreachable.
+const JOKE_CACHE_FILE = path.join(os.tmpdir(), 'cc-statusline-jokeapi-cache.json');
+const JOKE_REFRESH_LOCK_FILE = path.join(os.tmpdir(), 'cc-statusline-jokeapi-refresh.lock');
+const JOKE_CACHE_TTL_MS = parseInt(process.env.CC_SL_JOKE_TTL_MS, 10) || 15 * 60 * 1000; // 15 min
+const JOKE_API_URL = 'https://v2.jokeapi.dev/joke/Programming?type=single,twopart' +
+  '&blacklistFlags=nsfw,racist,sexist,religious,political,explicit&amount=10';
+
+function readJokeCache() {
+  try { return JSON.parse(fs.readFileSync(JOKE_CACHE_FILE, 'utf8')); } catch (_) { return null; }
+}
+
+function maybeRefreshJokeCacheInBackground() {
+  const cache = readJokeCache();
+  if (cache && Date.now() - cache.fetchedAt < JOKE_CACHE_TTL_MS) return; // still fresh
+  // Debounce: many statusline invocations can pile up while stale (1s
+  // refreshInterval) — only let one background fetch run at a time.
+  try {
+    const lock = fs.statSync(JOKE_REFRESH_LOCK_FILE);
+    if (Date.now() - lock.mtimeMs < 60 * 1000) return; // a fetch is already in flight
+  } catch (_) {}
+  try { fs.writeFileSync(JOKE_REFRESH_LOCK_FILE, ''); } catch (_) { return; }
+
+  const fetchScript = `
+    fetch(${JSON.stringify(JOKE_API_URL)}, { signal: AbortSignal.timeout(5000) })
+      .then(r => r.json())
+      .then(data => {
+        if (!data || data.error || !Array.isArray(data.jokes)) return;
+        const jokes = data.jokes
+          .map(j => j.type === 'single' ? j.joke : \`\${j.setup} — \${j.delivery}\`)
+          .filter(Boolean);
+        if (jokes.length) {
+          require('fs').writeFileSync(${JSON.stringify(JOKE_CACHE_FILE)},
+            JSON.stringify({ jokes, fetchedAt: Date.now() }));
+        }
+      })
+      .catch(() => {})
+      .finally(() => { try { require('fs').unlinkSync(${JSON.stringify(JOKE_REFRESH_LOCK_FILE)}); } catch (_) {} });
+  `;
+  try {
+    const child = spawn(process.execPath, ['-e', fetchScript], { detached: true, stdio: 'ignore' });
+    child.unref();
+  } catch (_) {}
+}
+
+const JOKE_ROTATE_MS = 15 * 1000;
+
+function sessionHash(sessionId) {
+  let hash = 0;
+  for (const ch of String(sessionId || '')) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return hash;
+}
+
+// A single slot number, ticking every JOKE_ROTATE_MS and offset per session
+// so concurrent windows land on different jokes. Reused for both picking an
+// item from a list AND alternating which source (local vs JokeAPI) to show.
+function rotationSlot(sessionId) {
+  return Math.floor(Date.now() / JOKE_ROTATE_MS) + sessionHash(sessionId);
+}
+
+function pickFromList(list, slot) {
+  if (!list.length) return '';
+  return list[slot % list.length];
+}
+
 function fmt1(n) {
   const v = Number(n) || 0;
   const rounded = Math.round(v * 10) / 10;
@@ -310,17 +381,37 @@ const SHOW_CONTEXT = enabled('context', 'CC_SL_CONTEXT');
 const SHOW_SESSION = enabled('session', 'CC_SL_SESSION');
 const SHOW_ROLLING = enabled('rolling', 'CC_SL_ROLLING');
 const SHOW_RATELIMITS = enabled('ratelimits', 'CC_SL_RATELIMITS');
+// Separate from SHOW_FUNNY: this one gates the network call specifically —
+// off means "local jokes only", never touching JokeAPI at all.
+const SHOW_JOKEAPI = enabled('jokeapi', 'CC_SL_JOKEAPI');
 
 // ---------- Build lines ----------
 const lines = [];
 
 let funny = '';
 if (SHOW_FUNNY) {
-  try {
-    const sessionId = data.session_id || '';
-    funny = execSync(`bash "${path.join(__dirname, 'statusline-funny.sh')}" "${sessionId}"`,
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trimEnd();
-  } catch (_) {}
+  const sessionId = data.session_id || '';
+  const slot = rotationSlot(sessionId);
+  let apiJoke = '';
+  if (SHOW_JOKEAPI) {
+    maybeRefreshJokeCacheInBackground();
+    const cache = readJokeCache();
+    if (cache?.jokes?.length) {
+      apiJoke = `\x1b[3m\x1b[38;2;230;120;80m💬 ${pickFromList(cache.jokes, slot)}${N}`;
+    }
+  }
+  // Alternate source every JOKE_ROTATE_MS: even slot -> local list, odd
+  // slot -> JokeAPI (falls back to local if the API cache isn't ready yet).
+  const preferApi = slot % 2 === 1 && apiJoke;
+  if (preferApi) {
+    funny = apiJoke;
+  } else {
+    try {
+      funny = execSync(`bash "${path.join(__dirname, 'statusline-funny.sh')}" "${sessionId}"`,
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trimEnd();
+    } catch (_) {}
+    if (!funny) funny = apiJoke;
+  }
 }
 
 // Line 1: cwd + git + funny message

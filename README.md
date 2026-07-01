@@ -10,6 +10,19 @@ Custom status line for [Claude Code](https://code.claude.com) — folder, git br
 5h: [█████---------------] 20.0% ⏱ 4h12m | 7d: [█▎-----------------------] 5.0% ⏱ 6d3h
 ```
 
+## Prerequisites
+
+- **Node.js 18+** (built-in `fetch` / `AbortSignal.timeout` are used for the JokeAPI fetch — no npm packages, no `node_modules`)
+- **git** (to clone the repo)
+- **bash** (runs `statusline-funny.sh` and `toggle.sh` — macOS/Linux out of the box; on Windows use WSL or Git Bash)
+- **Claude Code** already installed, since this replaces its status line
+
+Check your Node version:
+
+```bash
+node --version
+```
+
 ## Install
 
 **1. Clone the repo:**
@@ -54,16 +67,26 @@ Inside Claude Code, in any project:
 /sl ratelimits on
 ```
 
-Valid keys: `folder`, `git`, `funny`, `model`, `context`, `session`, `rolling`, `ratelimits`. Takes effect on the next render — no restart, since the toggle state lives in `~/.claude/cc-statusline-toggles.json` and `index.js` re-reads it every run.
+Valid keys: `folder`, `git`, `funny`, `jokeapi`, `model`, `context`, `session`, `rolling`, `ratelimits`. Takes effect on the next render — no restart, since the toggle state lives in `~/.claude/cc-statusline-toggles.json` and `index.js` re-reads it every run.
 
 Same toggles also work via env vars (`CC_SL_FUNNY=0`, `CC_SL_ROLLING=0`, etc.) if you'd rather bake them into the `statusLine.command` string or your shell profile — the toggle file takes precedence when both are set.
+
+## Joke line — JokeAPI, with a privacy-conscious fetch strategy
+
+The joke line alternates every 15 seconds between the bundled local list (`statusline-funny.sh`) and [JokeAPI](https://jokeapi.dev) (`Programming` category, NSFW/political/religious/etc. content excluded) — offset by a hash of the session id, so concurrent chat windows land on different jokes at different points in the cycle. Since the status line reruns every `refreshInterval` (as low as every 1s), it **never calls the API on the render path** — that would spam JokeAPI and risk the caller's (hashed) IP getting rate-limited or blacklisted per [their privacy policy](https://jokeapi.dev/#footer):
+
+- A batch of 10 jokes is cached to disk and reused for `CC_SL_JOKE_TTL_MS` (default 15 minutes).
+- When the cache goes stale, a **detached background process** fetches a fresh batch and exits — the current render never waits on it and just uses whatever's cached (or the local list) for its turn in the rotation.
+- A lock file debounces concurrent statusline invocations so only one background fetch runs at a time.
+- If the API is unreachable, slow (5s timeout), or the cache isn't populated yet, that turn in the rotation falls back to the local list instead. To skip JokeAPI entirely (local jokes only, no network calls at all): `/sl jokeapi off` or `CC_SL_JOKEAPI=0`.
 
 ## Env vars
 
 | Var | Default | Purpose |
 |---|---|---|
 | `CC_SL_<SECTION>` | `1` | Set to `0`/`false` to disable a section (see keys above) |
-| `CC_SL_CACHE_TTL_MS` | `30000` | How long the 7d/30d scan result is cached before rescanning |
+| `CC_SL_CACHE_TTL_MS` | `30000` | How long the 7d/30d cost scan is cached before rescanning |
+| `CC_SL_JOKE_TTL_MS` | `900000` | How long a batch of JokeAPI jokes is cached before refetching |
 
 ## Files
 
