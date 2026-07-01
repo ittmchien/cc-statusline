@@ -92,7 +92,11 @@ function getPricing(modelId) {
 // ~/.claude/projects/**/*.jsonl. Scanning that on every refresh (1s interval)
 // is too slow, so results are cached to disk for CACHE_TTL_MS.
 const USAGE_CACHE_FILE = path.join(os.tmpdir(), 'cc-statusline-usage-cache.json');
-const CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+// No focus/refresh hook exists for statusline commands — Claude Code just
+// re-runs this on its own refreshInterval. Shorter TTL = fresher numbers
+// when you glance back at a stale terminal, at the cost of more frequent
+// disk scans. Override with CC_SL_CACHE_TTL_MS if you want to tune it.
+const CACHE_TTL_MS = parseInt(process.env.CC_SL_CACHE_TTL_MS, 10) || 30 * 1000;
 
 function costForUsage(usage, modelId) {
   if (!usage) return 0;
@@ -282,14 +286,21 @@ const fiveHrReset = data.rate_limits?.five_hour?.resets_at;
 const weeklyPct = data.rate_limits?.seven_day?.used_percentage;
 const weeklyReset = data.rate_limits?.seven_day?.resets_at;
 
+// ---------- Feature toggles (env vars, set to "0" to disable) ----------
+function enabled(envVar) { return process.env[envVar] !== '0' && process.env[envVar] !== 'false'; }
+const SHOW_FUNNY = enabled('CC_SL_FUNNY');
+const SHOW_ROLLING = enabled('CC_SL_ROLLING');
+
 // ---------- Build lines ----------
 const lines = [];
 
 let funny = '';
-try {
-  funny = execSync(`bash "${path.join(__dirname, 'statusline-funny.sh')}"`,
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trimEnd();
-} catch (_) {}
+if (SHOW_FUNNY) {
+  try {
+    funny = execSync(`bash "${path.join(__dirname, 'statusline-funny.sh')}"`,
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trimEnd();
+  } catch (_) {}
+}
 
 // Line 1: cwd + git + funny message
 let line1 = `${SL_YELLOW}📁 ${shortPath}${N}`;
@@ -309,10 +320,12 @@ if (modelId) {
 const ctxBar = progressBar(ctxPct);
 const ctxColor = pctColor(ctxPct);
 line2 += ` ${D}🧠${N} ${ctxBar} ${ctxColor}${fmt1(ctxPct)}%${N}`;
-const { weekCost, monthCost } = getRollingCosts();
-line2 += ` ${D}|${N} ${D}💰${N} ${C}~$${fmtCost(sessionCost)}${N} ${D}|${N} ` +
-  `${D}7d${N} ${C}~$${fmtCost(weekCost)}${N} ${D}|${N} ` +
-  `${D}30d${N} ${C}~$${fmtCost(monthCost)}${N}`;
+line2 += ` ${D}|${N} ${D}💰${N} ${C}~$${fmtCost(sessionCost)}${N}`;
+if (SHOW_ROLLING) {
+  const { weekCost, monthCost } = getRollingCosts();
+  line2 += ` ${D}|${N} ${D}7d${N} ${C}~$${fmtCost(weekCost)}${N} ${D}|${N} ` +
+    `${D}30d${N} ${C}~$${fmtCost(monthCost)}${N}`;
+}
 lines.push(line2);
 
 // Line 3: rate limits
