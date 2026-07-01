@@ -148,7 +148,7 @@ function fmtCost(c) {
 }
 
 // ---------- Extract metrics ----------
-const cwd = data.cwd || process.cwd();
+const cwd = data.workspace?.current_dir || data.cwd || process.cwd();
 const home = process.env.HOME || os.homedir();
 const shortPath = cwd.startsWith(home) ? '~' + cwd.slice(home.length) : cwd;
 
