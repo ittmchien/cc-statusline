@@ -12,12 +12,19 @@ Custom status line for [Claude Code](https://code.claude.com) — folder, git br
 
 ## Install
 
+**1. Clone the repo:**
+
 ```bash
 git clone git@github.com:ittmchien/cc-statusline.git ~/cc-statusline
+```
+
+**2. Run the installer** — copies the `/sl` slash command into `~/.claude/commands/` and makes the shell scripts executable:
+
+```bash
 bash ~/cc-statusline/install.sh
 ```
 
-`install.sh` copies the `/sl` slash command into `~/.claude/commands/` and prints the `statusLine` config snippet — paste that into `~/.claude/settings.json` (all projects) or a project's `.claude/settings.local.json` (that project only, not committed):
+**3. Wire it into Claude Code** — the installer prints a JSON snippet at the end; add it to `~/.claude/settings.json` (applies to every project) or to a project's `.claude/settings.local.json` (that project only, not committed to git):
 
 ```json
 {
@@ -28,6 +35,8 @@ bash ~/cc-statusline/install.sh
   }
 }
 ```
+
+**4. Restart Claude Code** (or open a new session) — settings are read once at session start, so an already-running window won't pick up the change.
 
 ## Cost accuracy
 
