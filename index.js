@@ -412,6 +412,9 @@ if (SHOW_FUNNY) {
     } catch (_) {}
     if (!funny) funny = apiJoke;
   }
+  // JokeAPI (and in theory the local list) can contain embedded newlines —
+  // collapse to " | " so one joke never wraps the status line onto extra lines.
+  funny = funny.replace(/\r\n|\r|\n/g, ` ${D}|${N} `);
 }
 
 // Line 1: cwd + git + funny message
