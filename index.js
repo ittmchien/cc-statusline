@@ -168,11 +168,20 @@ const totalOut = parseInt(data.context_window?.total_output_tokens ?? 0, 10);
 const cacheRead = parseInt(data.context_window?.current_usage?.cache_read_input_tokens ?? 0, 10);
 const cacheWrite = parseInt(data.context_window?.current_usage?.cache_creation_input_tokens ?? 0, 10);
 
-const sessionCost =
-  totalIn    / 1e6 * pricing.input +
-  totalOut   / 1e6 * pricing.output +
-  cacheRead  / 1e6 * pricing.cacheRead +
-  cacheWrite / 1e6 * pricing.cacheWrite;
+// Prefer Claude Code's own cumulative cost (data.cost.total_cost_usd) — it
+// sums every turn across the whole session. context_window.*_tokens is only
+// a snapshot of the current context, not a running total, and undercounts
+// badly once turns/compactions pile up. Fall back to a per-token estimate
+// from the snapshot only when the native field is absent.
+const nativeCost = parseFloat(data.cost?.total_cost_usd);
+const sessionCost = Number.isFinite(nativeCost)
+  ? nativeCost
+  : (
+      totalIn    / 1e6 * pricing.input +
+      totalOut   / 1e6 * pricing.output +
+      cacheRead  / 1e6 * pricing.cacheRead +
+      cacheWrite / 1e6 * pricing.cacheWrite
+    );
 
 const fiveHrPct = data.rate_limits?.five_hour?.used_percentage;
 const fiveHrReset = data.rate_limits?.five_hour?.resets_at;
