@@ -298,8 +298,14 @@ function enabled(key, envVar) {
   if (Object.prototype.hasOwnProperty.call(toggleState, key)) return toggleState[key] !== false;
   return process.env[envVar] !== '0' && process.env[envVar] !== 'false';
 }
+const SHOW_FOLDER = enabled('folder', 'CC_SL_FOLDER');
+const SHOW_GIT = enabled('git', 'CC_SL_GIT');
 const SHOW_FUNNY = enabled('funny', 'CC_SL_FUNNY');
+const SHOW_MODEL = enabled('model', 'CC_SL_MODEL');
+const SHOW_CONTEXT = enabled('context', 'CC_SL_CONTEXT');
+const SHOW_SESSION = enabled('session', 'CC_SL_SESSION');
 const SHOW_ROLLING = enabled('rolling', 'CC_SL_ROLLING');
+const SHOW_RATELIMITS = enabled('ratelimits', 'CC_SL_RATELIMITS');
 
 // ---------- Build lines ----------
 const lines = [];
@@ -307,52 +313,64 @@ const lines = [];
 let funny = '';
 if (SHOW_FUNNY) {
   try {
-    funny = execSync(`bash "${path.join(__dirname, 'statusline-funny.sh')}"`,
+    const sessionId = data.session_id || '';
+    funny = execSync(`bash "${path.join(__dirname, 'statusline-funny.sh')}" "${sessionId}"`,
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trimEnd();
   } catch (_) {}
 }
 
 // Line 1: cwd + git + funny message
-let line1 = `${SL_YELLOW}📁 ${shortPath}${N}`;
-if (branch) {
+let line1 = '';
+if (SHOW_FOLDER) line1 += `${SL_YELLOW}📁 ${shortPath}${N}`;
+if (SHOW_GIT && branch) {
   const icon = branchEmoji(branch) || DEFAULT_BRANCH_ICON;
-  line1 += ` ${SL_GIT}${icon} ${branch}${N}`;
+  if (line1) line1 += ' ';
+  line1 += `${SL_GIT}${icon} ${branch}${N}`;
 }
-if (funny) line1 += ` ${D}|${N} ${funny}`;
-lines.push(line1);
+if (funny) line1 += line1 ? ` ${D}|${N} ${funny}` : funny;
+if (line1) lines.push(line1.trimStart());
 
 // Line 2: model + context + cost (session / 7d / 30d)
 let line2 = '';
-if (modelId) {
+if (SHOW_MODEL && modelId) {
   const ms = modelDisplay || formatModel(modelId, modelDisplay);
-  line2 = `${B}◆ ${ms}${N} ${D}|${N}`;
+  line2 = `${B}◆ ${ms}${N}`;
 }
-const ctxBar = progressBar(ctxPct);
-const ctxColor = pctColor(ctxPct);
-line2 += ` ${D}🧠${N} ${ctxBar} ${ctxColor}${fmt1(ctxPct)}%${N}`;
-line2 += ` ${D}|${N} ${D}💰${N} ${C}~$${fmtCost(sessionCost)}${N}`;
+if (SHOW_CONTEXT) {
+  const ctxBar = progressBar(ctxPct);
+  const ctxColor = pctColor(ctxPct);
+  if (line2) line2 += ` ${D}|${N}`;
+  line2 += ` ${D}🧠${N} ${ctxBar} ${ctxColor}${fmt1(ctxPct)}%${N}`;
+}
+if (SHOW_SESSION) {
+  if (line2) line2 += ` ${D}|${N}`;
+  line2 += ` ${D}💰${N} ${C}~$${fmtCost(sessionCost)}${N}`;
+}
 if (SHOW_ROLLING) {
   const { weekCost, monthCost } = getRollingCosts();
-  line2 += ` ${D}|${N} ${D}7d${N} ${C}~$${fmtCost(weekCost)}${N} ${D}|${N} ` +
+  if (line2) line2 += ` ${D}|${N}`;
+  line2 += ` ${D}7d${N} ${C}~$${fmtCost(weekCost)}${N} ${D}|${N} ` +
     `${D}30d${N} ${C}~$${fmtCost(monthCost)}${N}`;
 }
-lines.push(line2);
+if (line2) lines.push(line2.trimStart());
 
 // Line 3: rate limits
 let line3 = '';
-if (fiveHrPct != null && fiveHrPct !== '') {
-  const p = parseFloat(fiveHrPct);
-  line3 = `${D}5h:${N} ${progressBar(p)} ${pctColor(p)}${fmt1(p)}%${N}`;
-  const r = timeUntil(fiveHrReset);
-  if (r) line3 += ` ${D}⏱${N} ${r}`;
+if (SHOW_RATELIMITS) {
+  if (fiveHrPct != null && fiveHrPct !== '') {
+    const p = parseFloat(fiveHrPct);
+    line3 = `${D}5h:${N} ${progressBar(p)} ${pctColor(p)}${fmt1(p)}%${N}`;
+    const r = timeUntil(fiveHrReset);
+    if (r) line3 += ` ${D}⏱${N} ${r}`;
+  }
+  if (weeklyPct != null && weeklyPct !== '') {
+    const p = parseFloat(weeklyPct);
+    if (line3) line3 += ` ${D}|${N} `;
+    line3 += `${D}7d:${N} ${progressBar(p)} ${pctColor(p)}${fmt1(p)}%${N}`;
+    const r = timeUntil(weeklyReset);
+    if (r) line3 += ` ${D}⏱${N} ${r}`;
+  }
 }
-if (weeklyPct != null && weeklyPct !== '') {
-  const p = parseFloat(weeklyPct);
-  if (line3) line3 += ` ${D}|${N} `;
-  line3 += `${D}7d:${N} ${progressBar(p)} ${pctColor(p)}${fmt1(p)}%${N}`;
-  const r = timeUntil(weeklyReset);
-  if (r) line3 += ` ${D}⏱${N} ${r}`;
-}
-if (line3) lines.push(line3);
+if (line3) lines.push(line3.trimStart());
 
 process.stdout.write(lines.join('\n'));
