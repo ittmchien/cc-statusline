@@ -13,6 +13,26 @@ try { raw = fs.readFileSync(0, 'utf8'); } catch (_) {}
 let data = {};
 try { data = JSON.parse(raw || '{}'); } catch (_) {}
 
+// ---------- Toggle/config file (flip live via toggle.sh / the /sl slash
+// command — no restart needed since this whole script re-runs every
+// refreshInterval). Booleans use `enabled()`, numeric intervals use
+// `configNumber()`; both check this file first, then an env var, then
+// the hardcoded default.
+const TOGGLE_FILE = path.join(os.homedir(), '.claude', 'cc-statusline-toggles.json');
+let toggleState = {};
+try { toggleState = JSON.parse(fs.readFileSync(TOGGLE_FILE, 'utf8')); } catch (_) {}
+
+function enabled(key, envVar) {
+  if (Object.prototype.hasOwnProperty.call(toggleState, key)) return toggleState[key] !== false;
+  return process.env[envVar] !== '0' && process.env[envVar] !== 'false';
+}
+
+function configNumber(key, envVar, defaultVal) {
+  if (typeof toggleState[key] === 'number') return toggleState[key];
+  const fromEnv = parseInt(process.env[envVar], 10);
+  return Number.isFinite(fromEnv) ? fromEnv : defaultVal;
+}
+
 // ---------- ANSI helpers ----------
 const N = '\x1b[0m';
 const D = '\x1b[38;5;250m';
@@ -96,7 +116,7 @@ const USAGE_CACHE_FILE = path.join(os.tmpdir(), 'cc-statusline-usage-cache.json'
 // re-runs this on its own refreshInterval. Shorter TTL = fresher numbers
 // when you glance back at a stale terminal, at the cost of more frequent
 // disk scans. Override with CC_SL_CACHE_TTL_MS if you want to tune it.
-const CACHE_TTL_MS = parseInt(process.env.CC_SL_CACHE_TTL_MS, 10) || 30 * 1000;
+const CACHE_TTL_MS = configNumber('cacheTtlMs', 'CC_SL_CACHE_TTL_MS', 30 * 1000);
 
 function costForUsage(usage, modelId) {
   if (!usage) return 0;
@@ -255,7 +275,7 @@ const DEFAULT_BRANCH_ICON = '';
 // statusline-funny.sh whenever the cache is empty or the API is unreachable.
 const JOKE_CACHE_FILE = path.join(os.tmpdir(), 'cc-statusline-jokeapi-cache.json');
 const JOKE_REFRESH_LOCK_FILE = path.join(os.tmpdir(), 'cc-statusline-jokeapi-refresh.lock');
-const JOKE_CACHE_TTL_MS = parseInt(process.env.CC_SL_JOKE_TTL_MS, 10) || 15 * 60 * 1000; // 15 min
+const JOKE_CACHE_TTL_MS = configNumber('jokeTtlMs', 'CC_SL_JOKE_TTL_MS', 15 * 60 * 1000); // 15 min
 const JOKE_API_URL = 'https://v2.jokeapi.dev/joke/Programming?type=single,twopart' +
   '&blacklistFlags=nsfw,racist,sexist,religious,political,explicit&amount=10';
 
@@ -296,7 +316,7 @@ function maybeRefreshJokeCacheInBackground() {
   } catch (_) {}
 }
 
-const JOKE_ROTATE_MS = 15 * 1000;
+const JOKE_ROTATE_MS = configNumber('jokeRotateMs', 'CC_SL_JOKE_ROTATE_MS', 30 * 1000);
 
 function sessionHash(sessionId) {
   let hash = 0;
@@ -362,17 +382,6 @@ const weeklyPct = data.rate_limits?.seven_day?.used_percentage;
 const weeklyReset = data.rate_limits?.seven_day?.resets_at;
 
 // ---------- Feature toggles ----------
-// Checked in order: toggle-state file (flip live via toggle.sh / the
-// /sl-toggle slash command, no restart needed since this whole script
-// re-runs every refreshInterval) -> env var -> default on.
-const TOGGLE_FILE = path.join(os.homedir(), '.claude', 'cc-statusline-toggles.json');
-let toggleState = {};
-try { toggleState = JSON.parse(fs.readFileSync(TOGGLE_FILE, 'utf8')); } catch (_) {}
-
-function enabled(key, envVar) {
-  if (Object.prototype.hasOwnProperty.call(toggleState, key)) return toggleState[key] !== false;
-  return process.env[envVar] !== '0' && process.env[envVar] !== 'false';
-}
 const SHOW_FOLDER = enabled('folder', 'CC_SL_FOLDER');
 const SHOW_GIT = enabled('git', 'CC_SL_GIT');
 const SHOW_FUNNY = enabled('funny', 'CC_SL_FUNNY');
@@ -388,33 +397,43 @@ const SHOW_JOKEAPI = enabled('jokeapi', 'CC_SL_JOKEAPI');
 // ---------- Build lines ----------
 const lines = [];
 
+const JOKE_MAX_LEN = configNumber('jokeMaxLen', 'CC_SL_JOKE_MAX_LEN', 100);
+
 let funny = '';
 if (SHOW_FUNNY) {
   const sessionId = data.session_id || '';
   const slot = rotationSlot(sessionId);
-  let apiJoke = '';
+  let apiText = '';
   if (SHOW_JOKEAPI) {
     maybeRefreshJokeCacheInBackground();
     const cache = readJokeCache();
-    if (cache?.jokes?.length) {
-      apiJoke = `\x1b[3m\x1b[38;2;230;120;80m💬 ${pickFromList(cache.jokes, slot)}${N}`;
-    }
+    if (cache?.jokes?.length) apiText = pickFromList(cache.jokes, slot);
   }
   // Alternate source every JOKE_ROTATE_MS: even slot -> local list, odd
   // slot -> JokeAPI (falls back to local if the API cache isn't ready yet).
-  const preferApi = slot % 2 === 1 && apiJoke;
-  if (preferApi) {
-    funny = apiJoke;
+  let jokeText = '';
+  if (slot % 2 === 1 && apiText) {
+    jokeText = apiText;
   } else {
     try {
-      funny = execSync(`bash "${path.join(__dirname, 'statusline-funny.sh')}" "${sessionId}"`,
+      jokeText = execSync(`bash "${path.join(__dirname, 'statusline-funny.sh')}" "${sessionId}" "${Math.round(JOKE_ROTATE_MS / 1000)}"`,
         { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trimEnd();
     } catch (_) {}
-    if (!funny) funny = apiJoke;
+    if (!jokeText) jokeText = apiText;
   }
-  // JokeAPI (and in theory the local list) can contain embedded newlines —
-  // collapse to " | " so one joke never wraps the status line onto extra lines.
-  funny = funny.replace(/\r\n|\r|\n/g, ` ${D}|${N} `);
+  if (jokeText) {
+    // Embedded newlines (JokeAPI two-part jokes, mainly) would otherwise
+    // wrap the status line onto extra lines — collapse to " | " instead.
+    jokeText = jokeText.replace(/\r\n|\r|\n/g, ' | ');
+    // Cap length so one long joke can't push the whole line past the
+    // terminal width; cut on a word boundary where possible.
+    if (jokeText.length > JOKE_MAX_LEN) {
+      const cut = jokeText.slice(0, JOKE_MAX_LEN - 1);
+      const lastSpace = cut.lastIndexOf(' ');
+      jokeText = (lastSpace > JOKE_MAX_LEN * 0.6 ? cut.slice(0, lastSpace) : cut) + '…';
+    }
+    funny = `\x1b[3m\x1b[38;2;230;120;80m💬 ${jokeText}${N}`;
+  }
 }
 
 // Line 1: cwd + git + funny message

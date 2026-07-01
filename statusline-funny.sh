@@ -54,21 +54,21 @@ messages=(
   "AI wrote this comment. AI is also unsure why this function exists."
 )
 
-# Pick a message based on the current 15-second window (so it doesn't change
-# every refresh), offset by a hash of the session id (arg1) so different
-# chat windows land on different messages instead of all showing the same one.
+# Pick a message based on the current N-second window (so it doesn't change
+# every refresh — N comes from arg2, default 15s, kept in sync with
+# JOKE_ROTATE_MS in index.js), offset by a hash of the session id (arg1) so
+# different chat windows land on different messages instead of the same one.
 session_id="${1:-}"
+rotate_secs="${2:-15}"
 session_hash=0
 if [ -n "$session_id" ]; then
   session_hash=$(printf '%s' "$session_id" | cksum | awk '{print $1}')
 fi
 now_s=$(date +%s)
-window=$(( now_s / 15 ))
+window=$(( now_s / rotate_secs ))
 idx=$(( (window + session_hash) % ${#messages[@]} ))
 msg="${messages[$idx]}"
 
-# Static text — Claude Code "Pondering..." style warm orange/coral
-N='\033[0m'
-I='\033[3m'
-
-printf '%b' "${I}\033[38;2;230;120;80m💬 ${msg}${N}"
+# Plain text only — index.js applies the emoji/color styling and truncation
+# uniformly for whichever source (this or JokeAPI) ends up being shown.
+printf '%s' "$msg"
