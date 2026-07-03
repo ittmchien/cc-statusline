@@ -606,24 +606,26 @@ if (SHOW_SESSION) {
     if (sessionTokens != null) line2 += ` ${D}🪙 ${fmtTok(sessionTokens)}${N}`;
   }
 }
+// Rolling 7d/30d costs go on line 2, ahead of the rate-limit bars.
+let rolling = '';
 if (SHOW_ROLLING) {
   const { weekCost, monthCost, weekTokens, monthTokens } = getRollingCosts();
   const wTok = SHOW_TOKENS ? ` ${D}🪙 ${fmtTok(weekTokens)}${N}` : '';
   const mTok = SHOW_TOKENS ? ` ${D}🪙 ${fmtTok(monthTokens)}${N}` : '';
-  if (line2) line2 += ` ${D}|${N}`;
-  line2 += ` ${D}7d 💰${N} ${C}~$${fmtCost(weekCost)}${N}${wTok} ${D}|${N} ` +
+  rolling = `${D}7d 💰${N} ${C}~$${fmtCost(weekCost)}${N}${wTok} ${D}|${N} ` +
     `${D}30d 💰${N} ${C}~$${fmtCost(monthCost)}${N}${mTok}`;
 }
 if (line1 && line2) lines.push(`${line1} ${D}|${N} ${line2.trimStart()}`);
 else if (line1) lines.push(line1);
 else if (line2) lines.push(line2.trimStart());
 
-// Line 2: rate limits
-let line3 = '';
+// Line 2: rolling costs + rate limits
+let line3 = rolling;
 if (SHOW_RATELIMITS) {
   if (fiveHrPct != null && fiveHrPct !== '') {
     const p = parseFloat(fiveHrPct);
-    line3 = `${D}5h:${N} ${progressBar(p)} ${pctColor(p)}${fmt1(p)}%${N}`;
+    if (line3) line3 += ` ${D}|${N} `;
+    line3 += `${D}5h:${N} ${progressBar(p)} ${pctColor(p)}${fmt1(p)}%${N}`;
     const r = timeUntil(fiveHrReset);
     if (r) line3 += ` ${D}⏱${N} ${r}`;
   }
