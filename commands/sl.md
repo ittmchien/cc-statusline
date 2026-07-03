@@ -1,6 +1,6 @@
 ---
 description: Toggle a cc-statusline section, or set a numeric interval — no restart needed
-argument-hint: '[folder|git|funny|jokeapi|model|context|session|rolling|ratelimits|cacheTtlMs|jokeTtlMs|jokeRotateMs] [on|off|<number>]'
+argument-hint: '[folder|git|funny|jokeapi|model|context|session|rolling|ratelimits|tokens|cacheTtlMs|jokeTtlMs|jokeRotateMs] [on|off|<number>]'
 ---
 Run this and report the one-line result back to the user, terse, no extra explanation:
 
@@ -18,6 +18,7 @@ Boolean keys (on/off, or omit the value to flip):
 - `session` — the 💰 current-session cost
 - `rolling` — the 7d / 30d rolling cost totals
 - `ratelimits` — the 5h / 7d rate-limit bars
+- `tokens` — the 🪙 token counts shown next to the session / 7d / 30d costs
 
 Numeric keys (pass a millisecond value):
 - `cacheTtlMs` — how long the 7d/30d cost scan is cached (default 30000)

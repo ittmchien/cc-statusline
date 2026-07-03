@@ -6,7 +6,7 @@ Custom status line for [Claude Code](https://code.claude.com) — folder, git br
 
 ```
 📁 ~/company/diaflow-expo 🐛 fix/DP-1652 | 💬 It's not a bug, it's an undocumented feature with job security.
-◆ Sonnet | 🧠 [██▌----------------------] 10.0% | 💰 ~$0.42 | 7d ~$453.36 | 30d ~$958.02
+◆ Sonnet | 🧠 [██▌----------------------] 10.0% | 💰 ~$0.42 🪙 5.1M | 7d 💰 ~$453.36 🪙 2.0B | 30d 💰 ~$958.02 🪙 3.5B
 5h: [█████---------------] 20.0% ⏱ 4h12m | 7d: [█▎-----------------------] 5.0% ⏱ 6d3h
 ```
 
@@ -54,6 +54,7 @@ bash ~/cc-statusline/install.sh
 ## Cost accuracy
 
 - **Session cost** prefers Claude Code's own `cost.total_cost_usd` (accurate, cumulative) — never recomputed from token counts unless that field is missing.
+- **Token counts** (🪙, next to each cost figure) — the session total is summed from the session's own transcript file incrementally (only newly appended lines are parsed per refresh, deduped by `message.id`), since the stdin JSON only carries the last turn's snapshot, not a running total. 7d/30d totals come from the same scan as the rolling costs. Counted tokens = input + output + cache read + cache write.
 - **7d/30d rolling cost** scans `~/.claude/projects/**/*.jsonl`, dedupes by `message.id` (session resume/compaction can duplicate history across files), and bills cache writes by actual TTL (5m = 1.25x input, 1h = 2x input) instead of a flat rate. Cross-checked against [`ccusage`](https://github.com/ryoppippi/ccusage) — matches within ~0.5% on live data.
 - Results are cached to disk for `CC_SL_CACHE_TTL_MS` (default 30s) since scanning transcripts on every 1s refresh would be too slow.
 
@@ -67,7 +68,7 @@ Inside Claude Code, in any project:
 /sl ratelimits on
 ```
 
-Valid keys: `folder`, `git`, `funny`, `jokeapi`, `model`, `context`, `session`, `rolling`, `ratelimits`. Takes effect on the next render — no restart, since the toggle state lives in `~/.claude/cc-statusline-toggles.json` and `index.js` re-reads it every run.
+Valid keys: `folder`, `git`, `funny`, `jokeapi`, `model`, `context`, `session`, `rolling`, `ratelimits`, `tokens` (the 🪙 counts next to the cost figures). Takes effect on the next render — no restart, since the toggle state lives in `~/.claude/cc-statusline-toggles.json` and `index.js` re-reads it every run.
 
 Same toggles also work via env vars (`CC_SL_FUNNY=0`, `CC_SL_ROLLING=0`, etc.) if you'd rather bake them into the `statusLine.command` string or your shell profile — the toggle file takes precedence when both are set.
 

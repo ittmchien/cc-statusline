@@ -140,6 +140,17 @@ function costForUsage(usage, modelId) {
   );
 }
 
+// Total tokens consumed by one usage record — input + output + cache read +
+// cache write (same fields the cost math bills on).
+function tokensForUsage(usage) {
+  if (!usage) return 0;
+  const cc = usage.cache_creation || {};
+  const cw = ((cc.ephemeral_5m_input_tokens || 0) + (cc.ephemeral_1h_input_tokens || 0)) ||
+    (usage.cache_creation_input_tokens || 0);
+  return (usage.input_tokens || 0) + (usage.output_tokens || 0) +
+    (usage.cache_read_input_tokens || 0) + cw;
+}
+
 function findTranscripts(dir) {
   let out = [];
   let entries;
@@ -156,6 +167,8 @@ function scanUsageCost(sinceMonthMs, sinceWeekMs) {
   const projectsDir = path.join(os.homedir(), '.claude', 'projects');
   let weekCost = 0;
   let monthCost = 0;
+  let weekTokens = 0;
+  let monthTokens = 0;
   // Session resume/compaction rewrites overlapping history into new
   // transcript files, so the same assistant message (by message.id) can
   // appear in several files. Dedupe globally or costs get double-counted.
@@ -187,18 +200,22 @@ function scanUsageCost(sinceMonthMs, sinceWeekMs) {
       }
 
       const cost = costForUsage(usage, entry.message?.model);
+      const tokens = tokensForUsage(usage);
       monthCost += cost;
-      if (ts >= sinceWeekMs) weekCost += cost;
+      monthTokens += tokens;
+      if (ts >= sinceWeekMs) { weekCost += cost; weekTokens += tokens; }
     }
   }
 
-  return { weekCost, monthCost };
+  return { weekCost, monthCost, weekTokens, monthTokens };
 }
 
 function getRollingCosts() {
   try {
     const cached = JSON.parse(fs.readFileSync(USAGE_CACHE_FILE, 'utf8'));
-    if (Date.now() - cached.computedAt < CACHE_TTL_MS) return cached;
+    // Reject caches written by older versions that lack the token totals.
+    if (Date.now() - cached.computedAt < CACHE_TTL_MS &&
+        typeof cached.weekTokens === 'number') return cached;
   } catch (_) {}
 
   const now = Date.now();
@@ -208,6 +225,73 @@ function getRollingCosts() {
   };
   try { fs.writeFileSync(USAGE_CACHE_FILE, JSON.stringify(result)); } catch (_) {}
   return result;
+}
+
+// ---------- Session token total (scans the session's own transcript) ----------
+// No native cumulative token field exists in the stdin JSON
+// (context_window.total_* is only the last turn's snapshot), so sum usage
+// records from data.transcript_path. Incremental: cache the byte offset of
+// the last fully-parsed line and only read what was appended since — the
+// common per-refresh case parses nothing. A shrunk file (compaction rewrote
+// history) triggers a full rescan from byte 0.
+function sessionTokensCacheFile(transcriptPath) {
+  return path.join(os.tmpdir(), `cc-statusline-session-tokens-${sessionHash(transcriptPath)}.json`);
+}
+
+function getSessionTokens(transcriptPath) {
+  if (!transcriptPath) return null;
+  let stat;
+  try { stat = fs.statSync(transcriptPath); } catch (_) { return null; }
+
+  const cacheFile = sessionTokensCacheFile(transcriptPath);
+  let cache = null;
+  try { cache = JSON.parse(fs.readFileSync(cacheFile, 'utf8')); } catch (_) {}
+  if (cache?.path !== transcriptPath) cache = null;
+  if (cache && cache.size === stat.size) return cache.tokens;
+
+  let offset = 0;
+  let tokens = 0;
+  let lastMsgId = '';
+  if (cache && cache.size < stat.size) {
+    offset = cache.size;
+    tokens = cache.tokens;
+    lastMsgId = cache.lastMsgId || '';
+  }
+
+  let chunk;
+  try {
+    const fd = fs.openSync(transcriptPath, 'r');
+    const buf = Buffer.alloc(stat.size - offset);
+    fs.readSync(fd, buf, 0, buf.length, offset);
+    fs.closeSync(fd);
+    chunk = buf.toString('utf8');
+  } catch (_) { return cache ? cache.tokens : null; }
+
+  // Only parse up to the last newline — the tail may be a mid-write line.
+  const lastNl = chunk.lastIndexOf('\n');
+  if (lastNl === -1) return tokens;
+  for (const line of chunk.slice(0, lastNl).split('\n')) {
+    if (!line) continue;
+    let entry;
+    try { entry = JSON.parse(line); } catch (_) { continue; }
+    const usage = entry.message?.usage;
+    if (!usage) continue;
+    // One assistant turn spans several lines sharing message.id, each
+    // repeating the same usage — count it once. ponytail: consecutive-only
+    // dedupe (a Set would need persisting); same-id lines are adjacent in
+    // practice.
+    const msgId = entry.message?.id;
+    if (msgId && msgId === lastMsgId) continue;
+    if (msgId) lastMsgId = msgId;
+    tokens += tokensForUsage(usage);
+  }
+
+  try {
+    fs.writeFileSync(cacheFile, JSON.stringify({
+      path: transcriptPath, size: offset + lastNl + 1, tokens, lastMsgId,
+    }));
+  } catch (_) {}
+  return tokens;
 }
 
 // ---------- Helpers ----------
@@ -355,6 +439,14 @@ function fmt1(n) {
   return Number.isInteger(rounded) ? String(rounded) : v.toFixed(1);
 }
 
+function fmtTok(n) {
+  n = Number(n) || 0;
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+  return String(n);
+}
+
 function fmtCost(c) {
   c = Number(c) || 0;
   if (c >= 1.0) return c.toFixed(2);
@@ -403,6 +495,8 @@ const SHOW_CONTEXT = enabled('context', 'CC_SL_CONTEXT');
 const SHOW_SESSION = enabled('session', 'CC_SL_SESSION');
 const SHOW_ROLLING = enabled('rolling', 'CC_SL_ROLLING');
 const SHOW_RATELIMITS = enabled('ratelimits', 'CC_SL_RATELIMITS');
+// Token counts shown next to the session / 7d / 30d cost figures.
+const SHOW_TOKENS = enabled('tokens', 'CC_SL_TOKENS');
 // Separate from SHOW_FUNNY: this one gates the network call specifically —
 // off means "local jokes only", never touching JokeAPI at all.
 const SHOW_JOKEAPI = enabled('jokeapi', 'CC_SL_JOKEAPI');
@@ -465,12 +559,18 @@ if (SHOW_CONTEXT) {
 if (SHOW_SESSION) {
   if (line2) line2 += ` ${D}|${N}`;
   line2 += ` ${D}💰${N} ${C}~$${fmtCost(sessionCost)}${N}`;
+  if (SHOW_TOKENS) {
+    const sessionTokens = getSessionTokens(data.transcript_path);
+    if (sessionTokens != null) line2 += ` ${D}🪙 ${fmtTok(sessionTokens)}${N}`;
+  }
 }
 if (SHOW_ROLLING) {
-  const { weekCost, monthCost } = getRollingCosts();
+  const { weekCost, monthCost, weekTokens, monthTokens } = getRollingCosts();
+  const wTok = SHOW_TOKENS ? ` ${D}🪙 ${fmtTok(weekTokens)}${N}` : '';
+  const mTok = SHOW_TOKENS ? ` ${D}🪙 ${fmtTok(monthTokens)}${N}` : '';
   if (line2) line2 += ` ${D}|${N}`;
-  line2 += ` ${D}7d${N} ${C}~$${fmtCost(weekCost)}${N} ${D}|${N} ` +
-    `${D}30d${N} ${C}~$${fmtCost(monthCost)}${N}`;
+  line2 += ` ${D}7d 💰${N} ${C}~$${fmtCost(weekCost)}${N}${wTok} ${D}|${N} ` +
+    `${D}30d 💰${N} ${C}~$${fmtCost(monthCost)}${N}${mTok}`;
 }
 if (line2) lines.push(line2.trimStart());
 
