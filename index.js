@@ -619,12 +619,12 @@ if (line1 && line2) lines.push(`${line1} ${D}|${N} ${line2.trimStart()}`);
 else if (line1) lines.push(line1);
 else if (line2) lines.push(line2.trimStart());
 
-// Line 2: rolling costs + rate limits
-let line3 = rolling;
+// Line 2: rate limits first, rolling costs after — cost figures trail the
+// line, matching line 1's order.
+let line3 = '';
 if (SHOW_RATELIMITS) {
   if (fiveHrPct != null && fiveHrPct !== '') {
     const p = parseFloat(fiveHrPct);
-    if (line3) line3 += ` ${D}|${N} `;
     line3 += `${D}5h:${N} ${progressBar(p)} ${pctColor(p)}${fmt1(p)}%${N}`;
     const r = timeUntil(fiveHrReset);
     if (r) line3 += ` ${D}⏱${N} ${r}`;
@@ -637,6 +637,7 @@ if (SHOW_RATELIMITS) {
     if (r) line3 += ` ${D}⏱${N} ${r}`;
   }
 }
+if (rolling) line3 += line3 ? ` ${D}|${N} ${rolling}` : rolling;
 if (line3) lines.push(line3.trimStart());
 
 // Last line: the joke — on its own row so long ones wrap freely without
