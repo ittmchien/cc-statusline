@@ -1,14 +1,16 @@
 # cc-statusline
 
-Custom status line for [Claude Code](https://code.claude.com) — folder, git branch (gitmoji icon by prefix), model, context usage, session/7d/30d cost, rate limits, and a random dev-joke line.
+Custom status line for [Claude Code](https://code.claude.com) — folder, git branch (gitmoji icon by prefix), model (+ running subagents' models), context usage, session/7d/30d cost with token counts, rate limits, and a random dev-joke line.
 
 ## Preview
 
 ```
-📁 ~/company/diaflow-expo 🐛 fix/DP-1652 | 💬 It's not a bug, it's an undocumented feature with job security.
-◆ Sonnet | 🧠 [██▌----------------------] 10.0% | 💰 ~$0.42 🪙 5.1M | 7d 💰 ~$453.36 🪙 2.0B | 30d 💰 ~$958.02 🪙 3.5B
-5h: [█████---------------] 20.0% ⏱ 4h12m | 7d: [█▎-----------------------] 5.0% ⏱ 6d3h
+📁 ~/company/diaflow-expo 🐛 fix/DP-1652 | ◆ Sonnet ⤷ Haiku 4.5 | 🧠 [██▌-------] 25.0% | 💰 ~$0.42 🪙 5.1M | 7d 💰 ~$453.36 🪙 2.0B | 30d 💰 ~$958.02 🪙 3.5B
+5h: [██--------] 20.0% ⏱ 4h12m | 7d: [█▎--------] 13.0% ⏱ 6d3h
+💬 It's not a bug, it's an undocumented feature with job security.
 ```
+
+`⤷ Haiku 4.5` appears next to the model name while a subagent is running, showing which model it runs on (detected from fresh `subagents/agent-*.jsonl` transcripts next to the session transcript; disappears ~30s after the agent stops writing).
 
 ## Prerequisites
 

@@ -60,13 +60,13 @@ function pctColor(pct, mode = 'fg') {
 const LIGHT_GRAY = '\x1b[38;5;247m';
 const BLOCK_CHARS = ['', '▏', '▎', '▍', '▌', '▋', '▊', '▉'];
 
-function progressBar(pct, width = 25) {
+function progressBar(pct, width = 10) {
   const progress = Math.max(0, Math.min(1, (parseFloat(pct) || 0) / 100));
   const wholeWidth = Math.floor(progress * width);
   const remainderWidth = (progress * width) % 1;
   const partIndex = Math.floor(remainderWidth * 8);
   const partChar = BLOCK_CHARS[partIndex];
-  const emptyWidth = width - wholeWidth - (partChar === ' ' ? 0 : 1);
+  const emptyWidth = width - wholeWidth - (partChar ? 1 : 0);
 
   const fillColor = pctColor(pct);
   const filled = '█'.repeat(wholeWidth);
@@ -294,6 +294,45 @@ function getSessionTokens(transcriptPath) {
   return tokens;
 }
 
+// ---------- Active subagent models ----------
+// Subagent transcripts live in <dir>/<session_id>/subagents/agent-*.jsonl
+// next to the main transcript. A fresh mtime means that agent is (very
+// likely) still running; the last "model" occurrence in its tail says which
+// model it runs on. ponytail: mtime freshness is a heuristic — there is no
+// explicit running/finished signal in these files.
+const AGENT_ACTIVE_MS = 30 * 1000;
+
+function getActiveAgentModels(transcriptPath) {
+  if (!transcriptPath) return [];
+  const dir = path.join(path.dirname(transcriptPath),
+    path.basename(transcriptPath, '.jsonl'), 'subagents');
+  let names;
+  try { names = fs.readdirSync(dir); } catch (_) { return []; }
+  const models = new Set();
+  for (const name of names) {
+    if (!name.endsWith('.jsonl')) continue;
+    const full = path.join(dir, name);
+    let stat;
+    try { stat = fs.statSync(full); } catch (_) { continue; }
+    if (Date.now() - stat.mtimeMs > AGENT_ACTIVE_MS) continue;
+    // Tail read only — the last assistant line is what carries the model.
+    let tail = '';
+    try {
+      const fd = fs.openSync(full, 'r');
+      const start = Math.max(0, stat.size - 8192);
+      const buf = Buffer.alloc(stat.size - start);
+      fs.readSync(fd, buf, 0, buf.length, start);
+      fs.closeSync(fd);
+      tail = buf.toString('utf8');
+    } catch (_) { continue; }
+    const idx = tail.lastIndexOf('"model":"');
+    if (idx === -1) continue;
+    const end = tail.indexOf('"', idx + 9);
+    if (end > idx) models.add(tail.slice(idx + 9, end));
+  }
+  return [...models];
+}
+
 // ---------- Helpers ----------
 function formatModel(id, display) {
   if (!id) return display || '';
@@ -301,9 +340,10 @@ function formatModel(id, display) {
   if (/opus/i.test(id)) name = 'Opus';
   else if (/sonnet/i.test(id)) name = 'Sonnet';
   else if (/haiku/i.test(id)) name = 'Haiku';
+  else if (/fable/i.test(id)) name = 'Fable';
   else return display || id.slice(0, 20);
   const is1M = /1m/i.test(id) || /1m/i.test(display || '');
-  const m = id.match(/(opus|sonnet|haiku)-(\d+)-(\d+)/i);
+  const m = id.match(/(opus|sonnet|haiku|fable)-(\d+)-(\d+)/i);
   const version = m ? `${m[2]}.${m[3]}` : null;
   const suffix = is1M ? ' 1M' : '';
   if (version) return `${name} ${version}${suffix}`;
@@ -533,7 +573,8 @@ if (SHOW_FUNNY) {
   }
 }
 
-// Line 1: cwd + git + funny message
+// Line 1: cwd + git branch + usage (model / context / costs) — the bars are
+// short (10 steps) so it all fits on one row.
 let line1 = '';
 if (SHOW_FOLDER) line1 += `${SL_YELLOW}📁 ${shortPath}${N}`;
 if (SHOW_GIT && branch) {
@@ -541,14 +582,15 @@ if (SHOW_GIT && branch) {
   if (line1) line1 += ' ';
   line1 += `${SL_GIT}${icon} ${branch}${N}`;
 }
-if (funny) line1 += line1 ? ` ${D}|${N} ${funny}` : funny;
-if (line1) lines.push(line1.trimStart());
 
-// Line 2: model + context + cost (session / 7d / 30d)
 let line2 = '';
 if (SHOW_MODEL && modelId) {
   const ms = modelDisplay || formatModel(modelId, modelDisplay);
   line2 = `${B}◆ ${ms}${N}`;
+  // Append models of currently-running subagents, e.g. "◆ Fable 5 ⤷ Opus 4.8".
+  const agentModels = getActiveAgentModels(data.transcript_path)
+    .map((id) => formatModel(id, ''));
+  if (agentModels.length) line2 += ` ${D}⤷ ${agentModels.join(', ')}${N}`;
 }
 if (SHOW_CONTEXT) {
   const ctxBar = progressBar(ctxPct);
@@ -572,9 +614,11 @@ if (SHOW_ROLLING) {
   line2 += ` ${D}7d 💰${N} ${C}~$${fmtCost(weekCost)}${N}${wTok} ${D}|${N} ` +
     `${D}30d 💰${N} ${C}~$${fmtCost(monthCost)}${N}${mTok}`;
 }
-if (line2) lines.push(line2.trimStart());
+if (line1 && line2) lines.push(`${line1} ${D}|${N} ${line2.trimStart()}`);
+else if (line1) lines.push(line1);
+else if (line2) lines.push(line2.trimStart());
 
-// Line 3: rate limits
+// Line 2: rate limits
 let line3 = '';
 if (SHOW_RATELIMITS) {
   if (fiveHrPct != null && fiveHrPct !== '') {
@@ -592,5 +636,9 @@ if (SHOW_RATELIMITS) {
   }
 }
 if (line3) lines.push(line3.trimStart());
+
+// Last line: the joke — on its own row so long ones wrap freely without
+// pushing the data lines around.
+if (funny) lines.push(funny);
 
 process.stdout.write(lines.join('\n'));
