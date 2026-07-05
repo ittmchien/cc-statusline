@@ -163,16 +163,95 @@ function findTranscripts(dir) {
   return out;
 }
 
+// Per-file usage cache — same incremental-append technique as
+// getSessionTokens below. Most of the 300+ historical transcripts never
+// change again once a session ends, so re-reading their full content on
+// every aggregate cache miss (every CACHE_TTL_MS) was the actual hang:
+// ~300MB read+parsed synchronously, blocking the statusline render. Caching
+// an unchanged file costs one stat() instead of a full read+parse; only the
+// live session's growing file pays for parsing (and only its new bytes).
+//
+// Cached as {cost, tokens} summed per CALENDAR DAY, not one record per
+// message — a file can hold thousands of usage-bearing lines but only a
+// handful of days, so this stays tiny regardless of transcript size. Cost:
+// day-granularity means a week/month boundary falling mid-day is off by at
+// most one day's cost — fine for a "~$" estimate. It also drops the
+// cross-file message-id dedupe (compaction rewriting overlapping history
+// into a new file) since buckets no longer carry ids — that was a rare,
+// small overcount; day buckets trade it for a much smaller cache.
+const DAY_MS = 86400000;
+
+function fileUsageCachePath(file) {
+  return path.join(os.tmpdir(), `cc-statusline-fileusage-${path.basename(file, '.jsonl')}.json`);
+}
+
+function getFileUsageDayBuckets(file, stat) {
+  const cacheFile = fileUsageCachePath(file);
+  let cache = null;
+  try { cache = JSON.parse(fs.readFileSync(cacheFile, 'utf8')); } catch (_) {}
+  // Guard against a cache written by an older/newer schema (e.g. mid-upgrade,
+  // another concurrently-running statusline process on a different version)
+  // — treat anything not shaped like {size, days: {}} as a miss, not a crash.
+  if (cache && (typeof cache.days !== 'object' || cache.days === null)) cache = null;
+  if (cache && cache.size === stat.size) return cache.days;
+
+  let offset = 0;
+  let days = {};
+  let lastMsgId = '';
+  if (cache && cache.size < stat.size) {
+    offset = cache.size;
+    days = cache.days;
+    lastMsgId = cache.lastMsgId || '';
+  }
+
+  let chunk;
+  try {
+    const fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(stat.size - offset);
+    fs.readSync(fd, buf, 0, buf.length, offset);
+    fs.closeSync(fd);
+    chunk = buf.toString('utf8');
+  } catch (_) { return days; }
+
+  // Only parse up to the last newline — the tail may be a mid-write line.
+  const lastNl = chunk.lastIndexOf('\n');
+  if (lastNl === -1) return days;
+  for (const line of chunk.slice(0, lastNl).split('\n')) {
+    if (!line) continue;
+    let entry;
+    try { entry = JSON.parse(line); } catch (_) { continue; }
+    const usage = entry.message?.usage;
+    if (!usage) continue;
+    // One assistant turn spans several lines sharing message.id, each
+    // repeating the same usage — count it once (consecutive-only, same as
+    // getSessionTokens).
+    const msgId = entry.message?.id;
+    if (msgId && msgId === lastMsgId) continue;
+    if (msgId) lastMsgId = msgId;
+    const ts = Date.parse(entry.timestamp);
+    if (!Number.isFinite(ts)) continue;
+    const day = Math.floor(ts / DAY_MS) * DAY_MS;
+    const bucket = days[day] || (days[day] = { cost: 0, tokens: 0 });
+    bucket.cost += costForUsage(usage, entry.message?.model);
+    bucket.tokens += tokensForUsage(usage);
+  }
+
+  try {
+    fs.writeFileSync(cacheFile, JSON.stringify({
+      size: offset + lastNl + 1, days, lastMsgId,
+    }));
+  } catch (_) {}
+  return days;
+}
+
 function scanUsageCost(sinceMonthMs, sinceWeekMs) {
   const projectsDir = path.join(os.homedir(), '.claude', 'projects');
   let weekCost = 0;
   let monthCost = 0;
   let weekTokens = 0;
   let monthTokens = 0;
-  // Session resume/compaction rewrites overlapping history into new
-  // transcript files, so the same assistant message (by message.id) can
-  // appear in several files. Dedupe globally or costs get double-counted.
-  const seenMessageIds = new Set();
+  const sinceMonthDay = Math.floor(sinceMonthMs / DAY_MS) * DAY_MS;
+  const sinceWeekDay = Math.floor(sinceWeekMs / DAY_MS) * DAY_MS;
 
   for (const file of findTranscripts(projectsDir)) {
     let stat;
@@ -181,29 +260,14 @@ function scanUsageCost(sinceMonthMs, sinceWeekMs) {
     // month window, every line in it is too, so skip the whole file.
     if (stat.mtimeMs < sinceMonthMs) continue;
 
-    let content;
-    try { content = fs.readFileSync(file, 'utf8'); } catch (_) { continue; }
-
-    for (const line of content.split('\n')) {
-      if (!line) continue;
-      let entry;
-      try { entry = JSON.parse(line); } catch (_) { continue; }
-      const usage = entry.message?.usage;
-      if (!usage) continue;
-      const ts = Date.parse(entry.timestamp);
-      if (!Number.isFinite(ts) || ts < sinceMonthMs) continue;
-
-      const msgId = entry.message?.id;
-      if (msgId) {
-        if (seenMessageIds.has(msgId)) continue;
-        seenMessageIds.add(msgId);
-      }
-
-      const cost = costForUsage(usage, entry.message?.model);
-      const tokens = tokensForUsage(usage);
+    const days = getFileUsageDayBuckets(file, stat);
+    for (const day in days) {
+      const d = Number(day);
+      if (d < sinceMonthDay) continue;
+      const { cost, tokens } = days[day];
       monthCost += cost;
       monthTokens += tokens;
-      if (ts >= sinceWeekMs) { weekCost += cost; weekTokens += tokens; }
+      if (d >= sinceWeekDay) { weekCost += cost; weekTokens += tokens; }
     }
   }
 
