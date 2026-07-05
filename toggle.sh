@@ -5,8 +5,8 @@
 # Usage: toggle.sh <key> [on|off|<number>]
 #   Boolean keys (folder, git, funny, jokeapi, model, context, session,
 #     rolling, ratelimits): no value flips it, or pass on/off explicitly.
-#   Numeric keys (cacheTtlMs, jokeTtlMs, jokeRotateMs): pass a millisecond
-#     value directly, e.g. `toggle.sh jokeRotateMs 30000`.
+#   Numeric keys (cacheTtlMs, jokeTtlMs, jokeRotateMs, agentActiveMs,
+#     barWidth): pass a value directly, e.g. `toggle.sh jokeRotateMs 30000`.
 set -euo pipefail
 
 KEY="${1:-}"

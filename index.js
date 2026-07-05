@@ -59,8 +59,9 @@ function pctColor(pct, mode = 'fg') {
 // Progress bar using Unicode block elements for sub-character precision.
 const LIGHT_GRAY = '\x1b[38;5;247m';
 const BLOCK_CHARS = ['', '▏', '▎', '▍', '▌', '▋', '▊', '▉'];
+const BAR_WIDTH = configNumber('barWidth', 'CC_SL_BAR_WIDTH', 10);
 
-function progressBar(pct, width = 10) {
+function progressBar(pct, width = BAR_WIDTH) {
   const progress = Math.max(0, Math.min(1, (parseFloat(pct) || 0) / 100));
   const wholeWidth = Math.floor(progress * width);
   const remainderWidth = (progress * width) % 1;
@@ -364,7 +365,7 @@ function getSessionTokens(transcriptPath) {
 // likely) still running; the last "model" occurrence in its tail says which
 // model it runs on. ponytail: mtime freshness is a heuristic — there is no
 // explicit running/finished signal in these files.
-const AGENT_ACTIVE_MS = 30 * 1000;
+const AGENT_ACTIVE_MS = configNumber('agentActiveMs', 'CC_SL_AGENT_ACTIVE_MS', 30 * 1000);
 
 function getActiveAgentModels(transcriptPath) {
   if (!transcriptPath) return [];

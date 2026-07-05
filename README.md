@@ -86,12 +86,14 @@ The joke line alternates every `jokeRotateMs` (default 30s) between the bundled 
 
 ## Toggle numeric intervals — `/sl`
 
-Same `/sl` command, but for the three tunable intervals. **These already ship with sane defaults — you don't need to touch them to use cc-statusline.** Only change them if you want, e.g., a slower joke rotation or a longer cost-scan cache window:
+Same `/sl` command, but for the tunable numbers. **These already ship with sane defaults — you don't need to touch them to use cc-statusline.** Only change them if you want, e.g., a slower joke rotation or a longer cost-scan cache window:
 
 ```
-/sl jokeRotateMs 60000   # change the joke every 60s instead of 30s
-/sl cacheTtlMs 60000     # rescan 7d/30d cost every 60s instead of 30s
-/sl jokeTtlMs 1800000    # refetch a JokeAPI batch every 30min instead of 15
+/sl jokeRotateMs 60000    # change the joke every 60s instead of 30s
+/sl cacheTtlMs 60000      # rescan 7d/30d cost every 60s instead of 30s
+/sl jokeTtlMs 1800000     # refetch a JokeAPI batch every 30min instead of 15
+/sl agentActiveMs 60000   # consider a subagent "active" for 60s of mtime silence instead of 30s
+/sl barWidth 20           # make the context/rate-limit progress bars 20 chars wide instead of 10
 ```
 
 | Key | Default | Purpose |
@@ -99,8 +101,10 @@ Same `/sl` command, but for the three tunable intervals. **These already ship wi
 | `cacheTtlMs` | `30000` (30s) | How long the 7d/30d cost scan is cached before rescanning |
 | `jokeTtlMs` | `900000` (15min) | How long a batch of JokeAPI jokes is cached before refetching |
 | `jokeRotateMs` | `30000` (30s) | How often the joke line changes / alternates source |
+| `agentActiveMs` | `30000` (30s) | How long a subagent transcript's mtime silence still counts as "running" in the `⤷ Model` line |
+| `barWidth` | `10` | Width (in characters) of the context/rate-limit progress bars |
 
-Same env-var fallback pattern as the boolean toggles: `CC_SL_CACHE_TTL_MS`, `CC_SL_JOKE_TTL_MS`, `CC_SL_JOKE_ROTATE_MS` — the toggle file takes precedence when both are set.
+Same env-var fallback pattern as the boolean toggles: `CC_SL_CACHE_TTL_MS`, `CC_SL_JOKE_TTL_MS`, `CC_SL_JOKE_ROTATE_MS`, `CC_SL_AGENT_ACTIVE_MS`, `CC_SL_BAR_WIDTH` — the toggle file takes precedence when both are set.
 
 ## Env vars
 
@@ -110,6 +114,8 @@ Same env-var fallback pattern as the boolean toggles: `CC_SL_CACHE_TTL_MS`, `CC_
 | `CC_SL_CACHE_TTL_MS` | `30000` | See "Toggle numeric intervals" above |
 | `CC_SL_JOKE_TTL_MS` | `900000` | See "Toggle numeric intervals" above |
 | `CC_SL_JOKE_ROTATE_MS` | `30000` | See "Toggle numeric intervals" above |
+| `CC_SL_AGENT_ACTIVE_MS` | `30000` | See "Toggle numeric intervals" above |
+| `CC_SL_BAR_WIDTH` | `10` | See "Toggle numeric intervals" above |
 
 ## Files
 
