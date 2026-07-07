@@ -5,7 +5,7 @@ Custom status line for [Claude Code](https://code.claude.com) — Remote Control
 ## Preview
 
 ```
-🔗 ✅ | 📁 ~/company/diaflow-expo 🐛 fix/DP-1652 | ◆ Sonnet ⤷ Haiku 4.5 | 🧠 [██▌-------] 25.0%
+🔗 ✅ | 📁 ~/company/diaflow-expo | 🐛 fix/DP-1652 | ◆ Sonnet ⤷ Haiku 4.5 | 🧠 [██▌-------] 25.0%
 💰 ~$0.42 🪙 5.1M | today 💰 ~$141.81 🪙 317.3M | 7d 💰 ~$453.36 🪙 2.0B | 30d 💰 ~$958.02 🪙 3.5B | 5h: [██--------] 20.0% ⏱ 4h12m | 7d: [█▎--------] 13.0% ⏱ 6d3h
 💬 It's not a bug, it's an undocumented feature with job security.
 ```

@@ -702,21 +702,22 @@ let line1 = '';
 // Remote Control is active, 🔗 ❌ while not.
 if (SHOW_REMOTE) {
   const rc = isRemoteControlled(data.session_id);
-  line1 += `🔗 ${rc ? '✅' : '❌'} ${D}|${N}`;
+  line1 += `🔗 ${rc ? '✅' : '❌'}`;
 }
 if (SHOW_FOLDER) {
-  if (line1) line1 += ' ';
+  if (line1) line1 += ` ${D}|${N} `;
   line1 += `${SL_YELLOW}📁 ${shortPath}${N}`;
 }
+// UI: | separators between folder / branch / worktree, matching other segments.
 if (SHOW_GIT && branch) {
   const icon = branchEmoji(branch) || DEFAULT_BRANCH_ICON;
-  if (line1) line1 += ' ';
+  if (line1) line1 += ` ${D}|${N} `;
   line1 += `${SL_GIT}${icon} ${branch}${N}`;
 }
 if (SHOW_WORKTREE) {
   const worktree = getWorktreeName();
   if (worktree) {
-    if (line1) line1 += ' ';
+    if (line1) line1 += ` ${D}|${N} `;
     line1 += `${C}⧉ ${worktree}${N}`;
   }
 }
