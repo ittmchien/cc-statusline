@@ -182,6 +182,12 @@ function findTranscripts(dir) {
 // small overcount; day buckets trade it for a much smaller cache.
 const DAY_MS = 86400000;
 
+// Feature: "today" cost/token segment — buckets must align to LOCAL midnight,
+// not UTC (UTC+7 here would reset "today" at 7am). Index = local calendar day.
+function localDayIndex(ts) {
+  return Math.floor((ts - new Date(ts).getTimezoneOffset() * 60000) / DAY_MS);
+}
+
 function fileUsageCachePath(file) {
   return path.join(os.tmpdir(), `cc-statusline-fileusage-${path.basename(file, '.jsonl')}.json`);
 }
@@ -193,7 +199,9 @@ function getFileUsageDayBuckets(file, stat) {
   // Guard against a cache written by an older/newer schema (e.g. mid-upgrade,
   // another concurrently-running statusline process on a different version)
   // — treat anything not shaped like {size, days: {}} as a miss, not a crash.
-  if (cache && (typeof cache.days !== 'object' || cache.days === null)) cache = null;
+  // v2: day keys switched from UTC-day ms to localDayIndex — old caches
+  // bucket on the wrong boundary, so rebuild them.
+  if (cache && (cache.v !== 2 || typeof cache.days !== 'object' || cache.days === null)) cache = null;
   if (cache && cache.size === stat.size) return cache.days;
 
   let offset = 0;
@@ -231,7 +239,8 @@ function getFileUsageDayBuckets(file, stat) {
     if (msgId) lastMsgId = msgId;
     const ts = Date.parse(entry.timestamp);
     if (!Number.isFinite(ts)) continue;
-    const day = Math.floor(ts / DAY_MS) * DAY_MS;
+    // Feature today-segment: bucket by local calendar day (v2 cache schema).
+    const day = localDayIndex(ts);
     const bucket = days[day] || (days[day] = { cost: 0, tokens: 0 });
     bucket.cost += costForUsage(usage, entry.message?.model);
     bucket.tokens += tokensForUsage(usage);
@@ -239,20 +248,25 @@ function getFileUsageDayBuckets(file, stat) {
 
   try {
     fs.writeFileSync(cacheFile, JSON.stringify({
-      size: offset + lastNl + 1, days, lastMsgId,
+      v: 2, size: offset + lastNl + 1, days, lastMsgId,
     }));
   } catch (_) {}
   return days;
 }
 
-function scanUsageCost(sinceMonthMs, sinceWeekMs) {
+// Feature today-segment: also sum the current local day's bucket alongside
+// the 7d/30d windows.
+function scanUsageCost(sinceMonthMs, sinceWeekMs, nowMs) {
   const projectsDir = path.join(os.homedir(), '.claude', 'projects');
+  let todayCost = 0;
   let weekCost = 0;
   let monthCost = 0;
+  let todayTokens = 0;
   let weekTokens = 0;
   let monthTokens = 0;
-  const sinceMonthDay = Math.floor(sinceMonthMs / DAY_MS) * DAY_MS;
-  const sinceWeekDay = Math.floor(sinceWeekMs / DAY_MS) * DAY_MS;
+  const sinceMonthDay = localDayIndex(sinceMonthMs);
+  const sinceWeekDay = localDayIndex(sinceWeekMs);
+  const todayDay = localDayIndex(nowMs);
 
   for (const file of findTranscripts(projectsDir)) {
     let stat;
@@ -269,23 +283,25 @@ function scanUsageCost(sinceMonthMs, sinceWeekMs) {
       monthCost += cost;
       monthTokens += tokens;
       if (d >= sinceWeekDay) { weekCost += cost; weekTokens += tokens; }
+      if (d === todayDay) { todayCost += cost; todayTokens += tokens; }
     }
   }
 
-  return { weekCost, monthCost, weekTokens, monthTokens };
+  return { todayCost, weekCost, monthCost, todayTokens, weekTokens, monthTokens };
 }
 
 function getRollingCosts() {
   try {
     const cached = JSON.parse(fs.readFileSync(USAGE_CACHE_FILE, 'utf8'));
-    // Reject caches written by older versions that lack the token totals.
+    // Reject caches written by older versions that lack the token totals
+    // (todayTokens check also invalidates pre-today-segment caches).
     if (Date.now() - cached.computedAt < CACHE_TTL_MS &&
-        typeof cached.weekTokens === 'number') return cached;
+        typeof cached.todayTokens === 'number') return cached;
   } catch (_) {}
 
   const now = Date.now();
   const result = {
-    ...scanUsageCost(now - 30 * 86400 * 1000, now - 7 * 86400 * 1000),
+    ...scanUsageCost(now - 30 * 86400 * 1000, now - 7 * 86400 * 1000, now),
     computedAt: now,
   };
   try { fs.writeFileSync(USAGE_CACHE_FILE, JSON.stringify(result)); } catch (_) {}
@@ -365,7 +381,7 @@ function getSessionTokens(transcriptPath) {
 // likely) still running; the last "model" occurrence in its tail says which
 // model it runs on. ponytail: mtime freshness is a heuristic — there is no
 // explicit running/finished signal in these files.
-const AGENT_ACTIVE_MS = configNumber('agentActiveMs', 'CC_SL_AGENT_ACTIVE_MS', 30 * 1000);
+const AGENT_ACTIVE_MS = configNumber('agentActiveMs', 'CC_SL_AGENT_ACTIVE_MS', 60 * 1000);
 
 function getActiveAgentModels(transcriptPath) {
   if (!transcriptPath) return [];
@@ -396,6 +412,28 @@ function getActiveAgentModels(transcriptPath) {
     if (end > idx) models.add(tail.slice(idx + 9, end));
   }
   return [...models];
+}
+
+// ---------- Remote control detection ----------
+// Feature: 🔗 indicator when this session is under Remote Control
+// (claude.ai/mobile). No statusline JSON field exists for it (v2.1.202);
+// the signal lives in ~/.claude/sessions/<pid>.json as a non-null
+// bridgeSessionId. Match by sessionId; skip files whose pid is dead —
+// stale files from ended sessions can carry the same sessionId (resume).
+function isRemoteControlled(sessionId) {
+  if (!sessionId) return false;
+  const dir = path.join(os.homedir(), '.claude', 'sessions');
+  let names;
+  try { names = fs.readdirSync(dir); } catch (_) { return false; }
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    let s;
+    try { s = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')); } catch (_) { continue; }
+    if (s.sessionId !== sessionId) continue;
+    try { process.kill(s.pid, 0); } catch (_) { continue; }
+    return !!s.bridgeSessionId;
+  }
+  return false;
 }
 
 // ---------- Helpers ----------
@@ -570,6 +608,18 @@ try {
     { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 } catch (_) {}
 
+// Linked-worktree name — basename of the per-worktree git dir
+// (<main>/.git/worktrees/<name>). Empty in the main checkout, where
+// git-dir === git-common-dir and the folder path already says it all.
+function getWorktreeName() {
+  try {
+    const [gitDir, commonDir] = execSync(`git -C "${cwd}" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null`,
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().split('\n');
+    if (gitDir && commonDir && gitDir !== commonDir) return path.basename(gitDir);
+  } catch (_) {}
+  return '';
+}
+
 const modelId = data.model?.id || (typeof data.model === 'string' ? data.model : '');
 const modelDisplay = data.model?.display_name || '';
 
@@ -594,6 +644,7 @@ const weeklyReset = data.rate_limits?.seven_day?.resets_at;
 // ---------- Feature toggles ----------
 const SHOW_FOLDER = enabled('folder', 'CC_SL_FOLDER');
 const SHOW_GIT = enabled('git', 'CC_SL_GIT');
+const SHOW_WORKTREE = enabled('worktree', 'CC_SL_WORKTREE');
 const SHOW_FUNNY = enabled('funny', 'CC_SL_FUNNY');
 const SHOW_MODEL = enabled('model', 'CC_SL_MODEL');
 const SHOW_CONTEXT = enabled('context', 'CC_SL_CONTEXT');
@@ -602,6 +653,12 @@ const SHOW_ROLLING = enabled('rolling', 'CC_SL_ROLLING');
 const SHOW_RATELIMITS = enabled('ratelimits', 'CC_SL_RATELIMITS');
 // Token counts shown next to the session / 7d / 30d cost figures.
 const SHOW_TOKENS = enabled('tokens', 'CC_SL_TOKENS');
+// Feature: 🔗 remote-control indicator — shown only when active.
+const SHOW_REMOTE = enabled('remote', 'CC_SL_REMOTE');
+// Feature: today's cost/tokens next to session / 7d / 30d.
+const SHOW_TODAY = enabled('today', 'CC_SL_TODAY');
+// Feature: progress bars on context + rate-limit segments; off = % only.
+const SHOW_BARS = enabled('bars', 'CC_SL_BARS');
 // Separate from SHOW_FUNNY: this one gates the network call specifically —
 // off means "local jokes only", never touching JokeAPI at all.
 const SHOW_JOKEAPI = enabled('jokeapi', 'CC_SL_JOKEAPI');
@@ -641,11 +698,27 @@ if (SHOW_FUNNY) {
 // Line 1: cwd + git branch + usage (model / context / costs) — the bars are
 // short (10 steps) so it all fits on one row.
 let line1 = '';
-if (SHOW_FOLDER) line1 += `${SL_YELLOW}📁 ${shortPath}${N}`;
+// Feature remote-indicator: always first, before the 📁 cwd — 🔗 ✅ while
+// Remote Control is active, 🔗 ❌ while not.
+if (SHOW_REMOTE) {
+  const rc = isRemoteControlled(data.session_id);
+  line1 += `🔗 ${rc ? '✅' : '❌'} ${D}|${N}`;
+}
+if (SHOW_FOLDER) {
+  if (line1) line1 += ' ';
+  line1 += `${SL_YELLOW}📁 ${shortPath}${N}`;
+}
 if (SHOW_GIT && branch) {
   const icon = branchEmoji(branch) || DEFAULT_BRANCH_ICON;
   if (line1) line1 += ' ';
   line1 += `${SL_GIT}${icon} ${branch}${N}`;
+}
+if (SHOW_WORKTREE) {
+  const worktree = getWorktreeName();
+  if (worktree) {
+    if (line1) line1 += ' ';
+    line1 += `${C}⧉ ${worktree}${N}`;
+  }
 }
 
 let line2 = '';
@@ -658,51 +731,56 @@ if (SHOW_MODEL && modelId) {
   if (agentModels.length) line2 += ` ${D}⤷ ${agentModels.join(', ')}${N}`;
 }
 if (SHOW_CONTEXT) {
-  const ctxBar = progressBar(ctxPct);
   const ctxColor = pctColor(ctxPct);
+  // Feature bars-toggle: /sl bars off drops the bar, keeps the %.
+  const ctxBar = SHOW_BARS ? `${progressBar(ctxPct)} ` : '';
   if (line2) line2 += ` ${D}|${N}`;
-  line2 += ` ${D}🧠${N} ${ctxBar} ${ctxColor}${fmt1(ctxPct)}%${N}`;
-}
-if (SHOW_SESSION) {
-  if (line2) line2 += ` ${D}|${N}`;
-  line2 += ` ${D}💰${N} ${C}~$${fmtCost(sessionCost)}${N}`;
-  if (SHOW_TOKENS) {
-    const sessionTokens = getSessionTokens(data.transcript_path);
-    if (sessionTokens != null) line2 += ` ${D}🪙 ${fmtTok(sessionTokens)}${N}`;
-  }
-}
-// Rolling 7d/30d costs go on line 2, ahead of the rate-limit bars.
-let rolling = '';
-if (SHOW_ROLLING) {
-  const { weekCost, monthCost, weekTokens, monthTokens } = getRollingCosts();
-  const wTok = SHOW_TOKENS ? ` ${D}🪙 ${fmtTok(weekTokens)}${N}` : '';
-  const mTok = SHOW_TOKENS ? ` ${D}🪙 ${fmtTok(monthTokens)}${N}` : '';
-  rolling = `${D}7d 💰${N} ${C}~$${fmtCost(weekCost)}${N}${wTok} ${D}|${N} ` +
-    `${D}30d 💰${N} ${C}~$${fmtCost(monthCost)}${N}${mTok}`;
+  line2 += ` ${D}🧠${N} ${ctxBar}${ctxColor}${fmt1(ctxPct)}%${N}`;
 }
 if (line1 && line2) lines.push(`${line1} ${D}|${N} ${line2.trimStart()}`);
 else if (line1) lines.push(line1);
 else if (line2) lines.push(line2.trimStart());
 
-// Line 2: rate limits first, rolling costs after — cost figures trail the
-// line, matching line 1's order.
+// Line 2: every cost figure together — session, then 7d/30d rolling —
+// followed by the rate-limit usage bars (5h/7d used_percentage) last.
 let line3 = '';
+if (SHOW_SESSION) {
+  line3 += `${D}💰${N} ${C}~$${fmtCost(sessionCost)}${N}`;
+  if (SHOW_TOKENS) {
+    const sessionTokens = getSessionTokens(data.transcript_path);
+    if (sessionTokens != null) line3 += ` ${D}🪙 ${fmtTok(sessionTokens)}${N}`;
+  }
+}
+// Feature today-segment: today's cost/tokens shown between session and 7d/30d.
+if (SHOW_TODAY || SHOW_ROLLING) {
+  const { todayCost, weekCost, monthCost, todayTokens, weekTokens, monthTokens } = getRollingCosts();
+  const seg = (label, cost, tokens) => {
+    const tok = SHOW_TOKENS ? ` ${D}🪙 ${fmtTok(tokens)}${N}` : '';
+    return `${D}${label} 💰${N} ${C}~$${fmtCost(cost)}${N}${tok}`;
+  };
+  const segs = [];
+  if (SHOW_TODAY) segs.push(seg('today', todayCost, todayTokens));
+  if (SHOW_ROLLING) segs.push(seg('7d', weekCost, weekTokens), seg('30d', monthCost, monthTokens));
+  if (line3) line3 += ` ${D}|${N} `;
+  line3 += segs.join(` ${D}|${N} `);
+}
 if (SHOW_RATELIMITS) {
+  // Feature bars-toggle: /sl bars off drops the bars, keeps the %.
   if (fiveHrPct != null && fiveHrPct !== '') {
     const p = parseFloat(fiveHrPct);
-    line3 += `${D}5h:${N} ${progressBar(p)} ${pctColor(p)}${fmt1(p)}%${N}`;
+    if (line3) line3 += ` ${D}|${N} `;
+    line3 += `${D}5h:${N} ${SHOW_BARS ? progressBar(p) + ' ' : ''}${pctColor(p)}${fmt1(p)}%${N}`;
     const r = timeUntil(fiveHrReset);
     if (r) line3 += ` ${D}⏱${N} ${r}`;
   }
   if (weeklyPct != null && weeklyPct !== '') {
     const p = parseFloat(weeklyPct);
     if (line3) line3 += ` ${D}|${N} `;
-    line3 += `${D}7d:${N} ${progressBar(p)} ${pctColor(p)}${fmt1(p)}%${N}`;
+    line3 += `${D}7d:${N} ${SHOW_BARS ? progressBar(p) + ' ' : ''}${pctColor(p)}${fmt1(p)}%${N}`;
     const r = timeUntil(weeklyReset);
     if (r) line3 += ` ${D}⏱${N} ${r}`;
   }
 }
-if (rolling) line3 += line3 ? ` ${D}|${N} ${rolling}` : rolling;
 if (line3) lines.push(line3.trimStart());
 
 // Last line: the joke — on its own row so long ones wrap freely without
