@@ -760,8 +760,7 @@ if (SHOW_FUNNY) {
   }
 }
 
-// Line 1: cwd + git branch + usage (model / context / costs) — the bars are
-// short (10 steps) so it all fits on one row.
+// Line 1: cwd + git branch + model — context/turn live on the usage row below.
 let line1 = '';
 // Feature remote-indicator: always first, before the 📁 cwd — 🔗 ✅ while
 // Remote Control is active, 🔗 ❌ while not.
@@ -806,12 +805,19 @@ if (SHOW_MODEL && modelId) {
     .map((id) => `${modelTierRgb(id, '')}${formatModel(id, '')}${N}`);
   if (agentModels.length) line2 += ` ${D}⤷${N} ${agentModels.join(`${D}, ${N}`)}`;
 }
+if (line1 && line2) lines.push(`${line1} ${D}|${N} ${line2.trimStart()}`);
+else if (line1) lines.push(line1);
+else if (line2) lines.push(line2.trimStart());
+
+// Line 2: all usage together — context bar, per-turn cost, then session /
+// today / 7d / 30d costs, with the rate-limit bars (5h/7d) last.
+let line3 = '';
 if (SHOW_CONTEXT) {
   const ctxColor = pctColor(ctxPct);
   // Feature bars-toggle: /sl bars off drops the bar, keeps the %.
   const ctxBar = SHOW_BARS ? `${progressBar(ctxPct)} ` : '';
-  if (line2) line2 += ` ${D}|${N}`;
-  line2 += ` ${D}🧠${N} ${ctxBar}${ctxColor}${fmt1(ctxPct)}%${N}`;
+  if (line3) line3 += ` ${D}|${N} `;
+  line3 += `${D}🧠${N} ${ctxBar}${ctxColor}${fmt1(ctxPct)}%${N}`;
 }
 // Feature: per-turn cost/tokens — growth since the current prompt's baseline.
 // Resets on a new prompt_id; queued mid-turn messages keep the same id, so
@@ -844,19 +850,12 @@ if (SHOW_TURN && data.prompt_id) {
     }));
   } catch (_) {}
 
-  if (line2) line2 += ` ${D}|${N}`;
-  line2 += ` ${D}⚡${N} ${C}~$${fmtCost(totalCost - baseCost)}${N}`;
+  if (line3) line3 += ` ${D}|${N} `;
+  line3 += `${D}⚡${N} ${C}~$${fmtCost(totalCost - baseCost)}${N}`;
   if (SHOW_TOKENS && totalTokens != null && baseTokens != null) {
-    line2 += ` ${D}🪙 ${fmtTok(totalTokens - baseTokens)}${N}`;
+    line3 += ` ${D}🪙 ${fmtTok(totalTokens - baseTokens)}${N}`;
   }
 }
-if (line1 && line2) lines.push(`${line1} ${D}|${N} ${line2.trimStart()}`);
-else if (line1) lines.push(line1);
-else if (line2) lines.push(line2.trimStart());
-
-// Line 2: every cost figure together — session, then 7d/30d rolling —
-// followed by the rate-limit usage bars (5h/7d used_percentage) last.
-let line3 = '';
 if (SHOW_SESSION) {
   line3 += `${D}💰${N} ${C}~$${fmtCost(sessionCost)}${N}`;
   if (SHOW_TOKENS) {
