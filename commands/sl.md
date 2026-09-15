@@ -1,6 +1,6 @@
 ---
 description: Toggle a cc-statusline section, or set a numeric interval — no restart needed
-argument-hint: '[remote|folder|git|worktree|funny|jokeapi|model|context|session|today|rolling|ratelimits|tokens|bars|cacheTtlMs|jokeTtlMs|jokeRotateMs] [on|off|<number>]'
+argument-hint: '[remote|folder|git|worktree|funny|jokeapi|model|effort|context|turn|session|today|rolling|ratelimits|tokens|bars|cacheTtlMs|jokeTtlMs|jokeRotateMs] [on|off|<number>]'
 ---
 Run this and report the one-line result back to the user, terse, no extra explanation:
 
@@ -15,8 +15,10 @@ Boolean keys (on/off, or omit the value to flip):
 - `worktree` — the ⧉ linked-worktree name (only shown when the cwd is inside a linked git worktree)
 - `funny` — the joke line (local list + JokeAPI, alternating)
 - `jokeapi` — the JokeAPI half of the rotation specifically (off = local jokes only, no network calls)
-- `model` — the ◆ model name
+- `model` — the ◆ model name (colored per pricing tier)
+- `effort` — the effort-level word after the model name (color-scaled low→max)
 - `context` — the 🧠 context-window usage bar
+- `turn` — the ⚡ current/just-finished prompt-turn cost (plus 🪙 tokens when `tokens` is on)
 - `session` — the 💰 current-session cost
 - `today` — today's cost/tokens (local calendar day)
 - `rolling` — the 7d / 30d rolling cost totals

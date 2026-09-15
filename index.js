@@ -41,6 +41,10 @@ const B = '\x1b[38;2;230;120;80m'; // warm orange/coral
 const SL_YELLOW = '\x1b[33m';
 const SL_GIT = '\x1b[38;5;197m';
 
+// Feature: truecolor SGR from an [r,g,b] triple — used by model-tier, effort,
+// and ultracode-shimmer coloring below.
+function rgb([r, g, b]) { return `\x1b[38;2;${r};${g};${b}m`; }
+
 // Smooth RGB gradient: 0→green(0,200,0), 50→yellow(230,230,0), 100→red(230,0,0)
 function pctColor(pct, mode = 'fg') {
   let p = Math.max(0, Math.min(100, Math.floor(parseFloat(pct) || 0)));
@@ -414,6 +418,22 @@ function getActiveAgentModels(transcriptPath) {
   return [...models];
 }
 
+// ---------- Ultracode detection (shimmer trigger) ----------
+// Real session flag: the "ultracode" boolean settings key (toggled via /config
+// or --settings), not a prompt-keyword guess — merely mentioning the word in a
+// prompt must not light the shimmer. ponytail: per-session --settings /
+// apply_flag_settings overrides never touch these files, so that path isn't
+// detected; settings.json + settings.local.json cover the /config toggle.
+function isUltracode() {
+  for (const name of ['settings.local.json', 'settings.json']) {
+    try {
+      const s = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', name), 'utf8'));
+      if (typeof s.ultracode === 'boolean') return s.ultracode;
+    } catch (_) {}
+  }
+  return false;
+}
+
 // ---------- Remote control detection ----------
 // Feature: 🔗 indicator when this session is under Remote Control
 // (claude.ai/mobile). No statusline JSON field exists for it (v2.1.202);
@@ -437,6 +457,47 @@ function isRemoteControlled(sessionId) {
 }
 
 // ---------- Helpers ----------
+// Feature: per-tier model color — cheapest→priciest, keyed off model id then
+// display name; falls back to the warm-orange B when nothing matches.
+const MODEL_TIER_RGB = [
+  [/fable|mythos/i, [190, 120, 255]], // top tier / priciest — purple
+  [/opus/i,   [240, 140, 60]],        // orange
+  [/sonnet/i, [80, 170, 255]],        // blue
+  [/haiku/i,  [90, 200, 120]],        // cheapest — green
+];
+function modelTierRgb(id, display) {
+  const hay = `${id || ''} ${display || ''}`;
+  for (const [re, c] of MODEL_TIER_RGB) if (re.test(hay)) return rgb(c);
+  return B;
+}
+
+// Feature: effort-level color scale (same cheap→expensive idea as model tiers);
+// unknown level → dim D.
+const EFFORT_RGB = { low: [90, 200, 120], medium: [80, 170, 255], high: [240, 140, 60], xhigh: [235, 80, 80], max: [190, 120, 255] };
+function effortRgb(level) {
+  const c = EFFORT_RGB[level];
+  return c ? rgb(c) : D;
+}
+
+// Feature: ultracode shimmer — HSL(h,1,0.65)→RGB for the per-char rainbow.
+function hslToRgb(h, s, l) {
+  const k = (n) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
+}
+// The refreshInterval re-renders this each tick, so the Date.now() phase
+// advancing per render IS the animation; only ever runs in the ultracode branch.
+function shimmer(text) {
+  const t = Date.now();
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    const hue = (t / 50 + i * 20) % 360;
+    out += rgb(hslToRgb(hue, 1.0, 0.65)) + text[i];
+  }
+  return out + N;
+}
+
 function formatModel(id, display) {
   if (!id) return display || '';
   let name;
@@ -647,7 +708,11 @@ const SHOW_GIT = enabled('git', 'CC_SL_GIT');
 const SHOW_WORKTREE = enabled('worktree', 'CC_SL_WORKTREE');
 const SHOW_FUNNY = enabled('funny', 'CC_SL_FUNNY');
 const SHOW_MODEL = enabled('model', 'CC_SL_MODEL');
+// Feature: effort-level word shown right after the model name.
+const SHOW_EFFORT = enabled('effort', 'CC_SL_EFFORT');
 const SHOW_CONTEXT = enabled('context', 'CC_SL_CONTEXT');
+// Feature: per-turn cost/tokens (current or just-finished prompt) next to context.
+const SHOW_TURN = enabled('turn', 'CC_SL_TURN');
 const SHOW_SESSION = enabled('session', 'CC_SL_SESSION');
 const SHOW_ROLLING = enabled('rolling', 'CC_SL_ROLLING');
 const SHOW_RATELIMITS = enabled('ratelimits', 'CC_SL_RATELIMITS');
@@ -725,11 +790,21 @@ if (SHOW_WORKTREE) {
 let line2 = '';
 if (SHOW_MODEL && modelId) {
   const ms = modelDisplay || formatModel(modelId, modelDisplay);
-  line2 = `${B}◆ ${ms}${N}`;
-  // Append models of currently-running subagents, e.g. "◆ Fable 5 ⤷ Opus 4.8".
+  // Feature: effort word after the model name; toggle-gated, absent level omits it.
+  const effortLevel = SHOW_EFFORT ? data.effort?.level : undefined;
+  if (isUltracode()) {
+    // Feature: ultracode shimmer — rainbow-animate the whole model+effort text.
+    line2 = shimmer(`◆ ${ms}${effortLevel ? ` | ⚙ ${effortLevel}` : ''}`);
+  } else {
+    // Feature: per-tier model color (falls back to B), effort gets a dim separator + icon.
+    line2 = `${modelTierRgb(modelId, modelDisplay)}◆ ${ms}${N}`;
+    if (effortLevel) line2 += ` ${D}|${N} ${D}⚙${N} ${effortRgb(effortLevel)}${effortLevel}${N}`;
+  }
+  // Append models of currently-running subagents, each colored by its own tier
+  // (the ⤷ arrow and separators stay dim), e.g. "◆ Fable 5 ⤷ Opus 4.8".
   const agentModels = getActiveAgentModels(data.transcript_path)
-    .map((id) => formatModel(id, ''));
-  if (agentModels.length) line2 += ` ${D}⤷ ${agentModels.join(', ')}${N}`;
+    .map((id) => `${modelTierRgb(id, '')}${formatModel(id, '')}${N}`);
+  if (agentModels.length) line2 += ` ${D}⤷${N} ${agentModels.join(`${D}, ${N}`)}`;
 }
 if (SHOW_CONTEXT) {
   const ctxColor = pctColor(ctxPct);
@@ -737,6 +812,43 @@ if (SHOW_CONTEXT) {
   const ctxBar = SHOW_BARS ? `${progressBar(ctxPct)} ` : '';
   if (line2) line2 += ` ${D}|${N}`;
   line2 += ` ${D}🧠${N} ${ctxBar}${ctxColor}${fmt1(ctxPct)}%${N}`;
+}
+// Feature: per-turn cost/tokens — growth since the current prompt's baseline.
+// Resets on a new prompt_id; queued mid-turn messages keep the same id, so
+// they don't reset it. ponytail: tokens are main-loop only (getSessionTokens
+// doesn't sum subagent transcripts), while totalCost is the native session
+// total incl. subagents.
+if (SHOW_TURN && data.prompt_id) {
+  const totalCost = sessionCost; // reuse the native cumulative cost, don't re-read
+  const totalTokens = getSessionTokens(data.transcript_path);
+  const turnStateFile = path.join(os.tmpdir(), 'cc-statusline-turn-' + sessionHash(data.session_id) + '.json');
+  let ts = null;
+  try { ts = JSON.parse(fs.readFileSync(turnStateFile, 'utf8')); } catch (_) {}
+
+  let baseCost, baseTokens;
+  if (!ts || ts.promptId !== data.prompt_id) {
+    // New prompt (or first run): seed from the last sample taken before it appeared.
+    baseCost = ts ? ts.prevCost : totalCost;
+    baseTokens = ts ? ts.prevTokens : totalTokens;
+  } else {
+    baseCost = ts.baseCost;
+    baseTokens = ts.baseTokens;
+  }
+  // Clamp: a session restart/compaction can shrink totals below the baseline.
+  if (baseCost > totalCost) baseCost = totalCost;
+  if (totalTokens != null && baseTokens != null && baseTokens > totalTokens) baseTokens = totalTokens;
+
+  try {
+    fs.writeFileSync(turnStateFile, JSON.stringify({
+      promptId: data.prompt_id, baseCost, baseTokens, prevCost: totalCost, prevTokens: totalTokens,
+    }));
+  } catch (_) {}
+
+  if (line2) line2 += ` ${D}|${N}`;
+  line2 += ` ${D}⚡${N} ${C}~$${fmtCost(totalCost - baseCost)}${N}`;
+  if (SHOW_TOKENS && totalTokens != null && baseTokens != null) {
+    line2 += ` ${D}🪙 ${fmtTok(totalTokens - baseTokens)}${N}`;
+  }
 }
 if (line1 && line2) lines.push(`${line1} ${D}|${N} ${line2.trimStart()}`);
 else if (line1) lines.push(line1);
