@@ -702,6 +702,24 @@ const fiveHrReset = data.rate_limits?.five_hour?.resets_at;
 const weeklyPct = data.rate_limits?.seven_day?.used_percentage;
 const weeklyReset = data.rate_limits?.seven_day?.resets_at;
 
+// Feature usage-limit-gate: snapshot rate limits for cc-rule's
+// usage-limit-gate.sh (hooks don't receive rate_limits). Atomic tmp+rename;
+// never breaks rendering.
+if (data.rate_limits) {
+  try {
+    const win = (w) => ({ used_percentage: w?.used_percentage ?? null, resets_at: w?.resets_at ?? null });
+    const file = path.join(os.homedir(), '.claude', 'state', 'rate-limits.json');
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(tmp, JSON.stringify({
+      five_hour: win(data.rate_limits.five_hour),
+      seven_day: win(data.rate_limits.seven_day),
+      updated_at: Math.floor(Date.now() / 1000),
+    }));
+    fs.renameSync(tmp, file);
+  } catch (_) {}
+}
+
 // ---------- Feature toggles ----------
 const SHOW_FOLDER = enabled('folder', 'CC_SL_FOLDER');
 const SHOW_GIT = enabled('git', 'CC_SL_GIT');
@@ -760,7 +778,7 @@ if (SHOW_FUNNY) {
   }
 }
 
-// Line 1: cwd + git branch + model — context/turn live on the usage row below.
+// Line 1: cwd + git branch + model + per-turn cost — context lives on the usage row below.
 let line1 = '';
 // Feature remote-indicator: always first, before the 📁 cwd — 🔗 ✅ while
 // Remote Control is active, 🔗 ❌ while not.
@@ -805,25 +823,13 @@ if (SHOW_MODEL && modelId) {
     .map((id) => `${modelTierRgb(id, '')}${formatModel(id, '')}${N}`);
   if (agentModels.length) line2 += ` ${D}⤷${N} ${agentModels.join(`${D}, ${N}`)}`;
 }
-if (line1 && line2) lines.push(`${line1} ${D}|${N} ${line2.trimStart()}`);
-else if (line1) lines.push(line1);
-else if (line2) lines.push(line2.trimStart());
 
-// Line 2: all usage together — context bar, per-turn cost, then session /
-// today / 7d / 30d costs, with the rate-limit bars (5h/7d) last.
-let line3 = '';
-if (SHOW_CONTEXT) {
-  const ctxColor = pctColor(ctxPct);
-  // Feature bars-toggle: /sl bars off drops the bar, keeps the %.
-  const ctxBar = SHOW_BARS ? `${progressBar(ctxPct)} ` : '';
-  if (line3) line3 += ` ${D}|${N} `;
-  line3 += `${D}🧠${N} ${ctxBar}${ctxColor}${fmt1(ctxPct)}%${N}`;
-}
+let turnSeg = '';
 // Feature: per-turn cost/tokens — growth since the current prompt's baseline.
 // Resets on a new prompt_id; queued mid-turn messages keep the same id, so
-// they don't reset it. ponytail: tokens are main-loop only (getSessionTokens
-// doesn't sum subagent transcripts), while totalCost is the native session
-// total incl. subagents.
+// they don't reset it. Rendered at the end of the first row. ponytail: tokens
+// are main-loop only (getSessionTokens doesn't sum subagent transcripts),
+// while totalCost is the native session total incl. subagents.
 if (SHOW_TURN && data.prompt_id) {
   const totalCost = sessionCost; // reuse the native cumulative cost, don't re-read
   const totalTokens = getSessionTokens(data.transcript_path);
@@ -850,13 +856,29 @@ if (SHOW_TURN && data.prompt_id) {
     }));
   } catch (_) {}
 
-  if (line3) line3 += ` ${D}|${N} `;
-  line3 += `${D}⚡${N} ${C}~$${fmtCost(totalCost - baseCost)}${N}`;
+  turnSeg = `${D}⚡${N} ${C}~$${fmtCost(totalCost - baseCost)}${N}`;
   if (SHOW_TOKENS && totalTokens != null && baseTokens != null) {
-    line3 += ` ${D}🪙 ${fmtTok(totalTokens - baseTokens)}${N}`;
+    turnSeg += ` ${D}🪙 ${fmtTok(totalTokens - baseTokens)}${N}`;
   }
 }
+// Feature: per-turn segment appended to the end of the first row.
+let row1 = line1 && line2 ? `${line1} ${D}|${N} ${line2.trimStart()}` : (line1 || line2.trimStart());
+if (turnSeg) row1 = row1 ? `${row1} ${D}|${N} ${turnSeg}` : turnSeg;
+if (row1) lines.push(row1);
+
+// Line 2: all usage together — context bar, then session /
+// today / 7d / 30d costs, with the rate-limit bars (5h/7d) last.
+let line3 = '';
+if (SHOW_CONTEXT) {
+  const ctxColor = pctColor(ctxPct);
+  // Feature bars-toggle: /sl bars off drops the bar, keeps the %.
+  const ctxBar = SHOW_BARS ? `${progressBar(ctxPct)} ` : '';
+  if (line3) line3 += ` ${D}|${N} `;
+  line3 += `${D}🧠${N} ${ctxBar}${ctxColor}${fmt1(ctxPct)}%${N}`;
+}
 if (SHOW_SESSION) {
+  // Fix: separator after context now that the turn segment moved to row 1.
+  if (line3) line3 += ` ${D}|${N} `;
   line3 += `${D}💰${N} ${C}~$${fmtCost(sessionCost)}${N}`;
   if (SHOW_TOKENS) {
     const sessionTokens = getSessionTokens(data.transcript_path);
