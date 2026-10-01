@@ -5,7 +5,7 @@ argument-hint: '[remote|folder|git|worktree|funny|jokeapi|model|effort|context|t
 Run this and report the one-line result back to the user, terse, no extra explanation:
 
 ```bash
-bash ~/cc-statusline/toggle.sh $ARGUMENTS
+bash ~/github/cc-statusline/toggle.sh $ARGUMENTS
 ```
 
 Boolean keys (on/off, or omit the value to flip):
