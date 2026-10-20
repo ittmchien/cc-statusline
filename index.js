@@ -440,20 +440,59 @@ function isUltracode() {
 // the signal lives in ~/.claude/sessions/<pid>.json as a non-null
 // bridgeSessionId. Match by sessionId; skip files whose pid is dead —
 // stale files from ended sessions can carry the same sessionId (resume).
-function isRemoteControlled(sessionId) {
-  if (!sessionId) return false;
+// DRY: this session's live entry in ~/.claude/sessions/<pid>.json (shared by the
+// Remote Control indicator and the net-usage segment), or null.
+function findLiveSession(sessionId) {
+  if (!sessionId) return null;
   const dir = path.join(os.homedir(), '.claude', 'sessions');
   let names;
-  try { names = fs.readdirSync(dir); } catch (_) { return false; }
+  try { names = fs.readdirSync(dir); } catch (_) { return null; }
   for (const name of names) {
     if (!name.endsWith('.json')) continue;
     let s;
     try { s = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')); } catch (_) { continue; }
     if (s.sessionId !== sessionId) continue;
     try { process.kill(s.pid, 0); } catch (_) { continue; }
-    return !!s.bridgeSessionId;
+    return s;
   }
-  return false;
+  return null;
+}
+
+function isRemoteControlled(sessionId) {
+  return !!findLiveSession(sessionId)?.bridgeSessionId;
+}
+
+// Feature net-usage: bytes up/down of this session's `claude` process (macOS `nettop`,
+// ~20ms), saved per session to ~/.claude/state/net-usage/<sid>.json for later stats.
+// ponytail: only the claude process itself — child processes (git/yarn/MCP servers) not counted.
+function getNetUsage(sessionId) {
+  const s = findLiveSession(sessionId);
+  if (!s) return null;
+  let out;
+  try {
+    out = execSync(`nettop -P -L 1 -x -n -J bytes_in,bytes_out -p ${Number(s.pid)}`,
+      { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch (_) { return null; }
+  // Output: header line, then "<name>.<pid>,<bytes_in>,<bytes_out>,"
+  const [, inB, outB] = (out.split('\n')[1] || '').split(',');
+  const bytesIn = Number(inB), bytesOut = Number(outB);
+  if (!inB || !outB || !Number.isFinite(bytesIn) || !Number.isFinite(bytesOut)) return null;
+  try {
+    const file = path.join(os.homedir(), '.claude', 'state', 'net-usage', `${sessionId}.json`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({
+      sessionId, pid: s.pid, cwd: data.workspace?.current_dir || data.cwd || '',
+      bytesIn, bytesOut, updatedAt: Math.floor(Date.now() / 1000),
+    }));
+  } catch (_) {}
+  return { bytesIn, bytesOut };
+}
+
+function fmtBytes(n) {
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + 'GB';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'MB';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'KB';
+  return `${n}B`;
 }
 
 // ---------- Helpers ----------
@@ -739,6 +778,8 @@ const SHOW_MODEL = enabled('model', 'CC_SL_MODEL');
 // Feature: effort-level word shown right after the model name.
 const SHOW_EFFORT = enabled('effort', 'CC_SL_EFFORT');
 const SHOW_CONTEXT = enabled('context', 'CC_SL_CONTEXT');
+// Feature: session network usage (🌐 ↑out ↓in) right after context on the usage row.
+const SHOW_NET = enabled('net', 'CC_SL_NET');
 // Feature: per-turn cost/tokens (current or just-finished prompt) next to context.
 const SHOW_TURN = enabled('turn', 'CC_SL_TURN');
 const SHOW_SESSION = enabled('session', 'CC_SL_SESSION');
@@ -885,6 +926,13 @@ if (SHOW_CONTEXT) {
   const ctxBar = SHOW_BARS ? `${progressBar(ctxPct)} ` : '';
   if (line3) line3 += ` ${D}|${N} `;
   line3 += `${D}🧠${N} ${ctxBar}${ctxColor}${fmt1(ctxPct)}%${N}`;
+}
+if (SHOW_NET) {
+  const net = getNetUsage(data.session_id);
+  if (net) {
+    if (line3) line3 += ` ${D}|${N} `;
+    line3 += `${D}🌐 ↑${N}${C}${fmtBytes(net.bytesOut)}${N} ${D}↓${N}${C}${fmtBytes(net.bytesIn)}${N}`;
+  }
 }
 if (SHOW_SESSION) {
   // Fix: separator after context now that the turn segment moved to row 1.

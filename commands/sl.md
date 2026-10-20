@@ -1,6 +1,6 @@
 ---
 description: Toggle a cc-statusline section, or set a numeric interval — no restart needed
-argument-hint: '[remote|folder|git|worktree|funny|jokeapi|model|effort|context|turn|session|today|rolling|ratelimits|tokens|bars|cacheTtlMs|jokeTtlMs|jokeRotateMs] [on|off|<number>]'
+argument-hint: '[remote|folder|git|worktree|funny|jokeapi|model|effort|context|net|turn|session|today|rolling|ratelimits|tokens|bars|cacheTtlMs|jokeTtlMs|jokeRotateMs] [on|off|<number>]'
 ---
 Run this and report the one-line result back to the user, terse, no extra explanation:
 
@@ -18,6 +18,7 @@ Boolean keys (on/off, or omit the value to flip):
 - `model` — the ◆ model name (colored per pricing tier)
 - `effort` — the effort-level word after the model name (color-scaled low→max)
 - `context` — the 🧠 context-window usage bar
+- `net` — the 🌐 ↑sent ↓received bytes of this session's `claude` process (macOS `nettop`), also saved to `~/.claude/state/net-usage/<session_id>.json`
 - `turn` — the ⚡ current/just-finished prompt-turn cost (plus 🪙 tokens when `tokens` is on)
 - `session` — the 💰 current-session cost
 - `today` — today's cost/tokens (local calendar day)
