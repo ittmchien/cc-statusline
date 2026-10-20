@@ -708,15 +708,25 @@ const weeklyReset = data.rate_limits?.seven_day?.resets_at;
 if (data.rate_limits) {
   try {
     const win = (w) => ({ used_percentage: w?.used_percentage ?? null, resets_at: w?.resets_at ?? null });
-    const file = path.join(os.homedir(), '.claude', 'state', 'rate-limits.json');
-    const tmp = `${file}.${process.pid}.tmp`;
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(tmp, JSON.stringify({
+    const json = JSON.stringify({
       five_hour: win(data.rate_limits.five_hour),
       seven_day: win(data.rate_limits.seven_day),
       updated_at: Math.floor(Date.now() / 1000),
-    }));
-    fs.renameSync(tmp, file);
+    });
+    const stateDir = path.join(os.homedir(), '.claude', 'state');
+    const writeAtomic = (file) => {
+      const tmp = `${file}.${process.pid}.tmp`;
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(tmp, json);
+      fs.renameSync(tmp, file);
+    };
+    // Per-session copy: the gate reads its own session's file, since sessions on different accounts
+    // overwrite the shared one (last writer wins → old account's usage after a switch).
+    if (/^[A-Za-z0-9_-]+$/.test(data.session_id || '')) {
+      writeAtomic(path.join(stateDir, 'rate-limits', `${data.session_id}.json`));
+    }
+    // compat: shared snapshot kept for readers outside cc-rule's per-session gate
+    writeAtomic(path.join(stateDir, 'rate-limits.json'));
   } catch (_) {}
 }
 
