@@ -1,12 +1,12 @@
 # cc-statusline
 
-Custom status line for [Claude Code](https://code.claude.com) — Remote Control indicator, folder, git branch (gitmoji icon by prefix), linked-worktree name, model (+ running subagents' models), context usage, session/today/7d/30d cost with token counts, rate limits, and a random dev-joke line.
+Custom status line for [Claude Code](https://code.claude.com) — Remote Control indicator, git branch (gitmoji icon by prefix), model (+ effort and running subagents' models), folder, linked-worktree name, context usage, session/today/7d/30d cost with token counts, rate limits, and a random dev-joke line.
 
 ## Preview
 
 ```
-🔗 ✅ | 📁 ~/company/diaflow-expo | 🐛 fix/DP-1652 | ◆ Sonnet ⤷ Haiku 4.5 | 🧠 [██▌-------] 25.0%
-💰 ~$0.42 🪙 5.1M | today 💰 ~$141.81 🪙 317.3M | 7d 💰 ~$453.36 🪙 2.0B | 30d 💰 ~$958.02 🪙 3.5B | 5h: [██--------] 20.0% ⏱ 4h12m | 7d: [█▎--------] 13.0% ⏱ 6d3h
+🔗 ✅ | 🐛 fix/DP-1652 | ◆ Sonnet | ⚙ high ⤷ Haiku 4.5 | 📁 ~/company/diaflow-expo
+🧠 [██▌-------] 25.0% | 💰 ~$0.42 🪙 5.1M | today 💰 ~$141.81 🪙 317.3M | 7d 💰 ~$453.36 🪙 2.0B | 30d 💰 ~$958.02 🪙 3.5B | 5h: [██--------] 20.0% ⏱ 4h12m | 7d: [█▎--------] 13.0% ⏱ 6d3h
 💬 It's not a bug, it's an undocumented feature with job security.
 ```
 

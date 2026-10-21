@@ -829,7 +829,7 @@ if (SHOW_FUNNY) {
   }
 }
 
-// Line 1: cwd + git branch + model + per-turn cost — context lives on the usage row below.
+// Line 1: git branch + model/effort + cwd + per-turn cost — context lives on the usage row below.
 let line1 = '';
 // Feature remote-indicator: always first, before the 📁 cwd — 🔗 ✅ while
 // Remote Control is active, 🔗 ❌ while not.
@@ -837,21 +837,22 @@ if (SHOW_REMOTE) {
   const rc = isRemoteControlled(data.session_id);
   line1 += `🔗 ${rc ? '✅' : '❌'}`;
 }
-if (SHOW_FOLDER) {
-  if (line1) line1 += ` ${D}|${N} `;
-  line1 += `${SL_YELLOW}📁 ${shortPath}${N}`;
-}
-// UI: | separators between folder / branch / worktree, matching other segments.
+// UI: | separators between branch / folder / worktree, matching other segments; branch leads.
 if (SHOW_GIT && branch) {
   const icon = branchEmoji(branch) || DEFAULT_BRANCH_ICON;
   if (line1) line1 += ` ${D}|${N} `;
   line1 += `${SL_GIT}${icon} ${branch}${N}`;
 }
+// UI: folder + worktree go after the model/effort block (row order: 🔗 | branch | ◆ model ⚙ effort | 📁 | ⧉).
+let line1Tail = '';
+if (SHOW_FOLDER) {
+  line1Tail += `${SL_YELLOW}📁 ${shortPath}${N}`;
+}
 if (SHOW_WORKTREE) {
   const worktree = getWorktreeName();
   if (worktree) {
-    if (line1) line1 += ` ${D}|${N} `;
-    line1 += `${C}⧉ ${worktree}${N}`;
+    if (line1Tail) line1Tail += ` ${D}|${N} `;
+    line1Tail += `${C}⧉ ${worktree}${N}`;
   }
 }
 
@@ -913,7 +914,7 @@ if (SHOW_TURN && data.prompt_id) {
   }
 }
 // Feature: per-turn segment appended to the end of the first row.
-let row1 = line1 && line2 ? `${line1} ${D}|${N} ${line2.trimStart()}` : (line1 || line2.trimStart());
+let row1 = [line1, line2.trimStart(), line1Tail].filter(Boolean).join(` ${D}|${N} `);
 if (turnSeg) row1 = row1 ? `${row1} ${D}|${N} ${turnSeg}` : turnSeg;
 if (row1) lines.push(row1);
 
