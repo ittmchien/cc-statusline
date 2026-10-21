@@ -34,13 +34,13 @@ node --version
 **1. Clone the repo:**
 
 ```bash
-git clone git@github.com:ittmchien/cc-statusline.git ~/cc-statusline
+git clone git@github.com:ittmchien/cc-statusline.git <anywhere>/cc-statusline
 ```
 
-**2. Run the installer** — copies the `/sl` slash command into `~/.claude/commands/` and makes the shell scripts executable:
+**2. Run the installer** — copies the `/sl` slash command into `~/.claude/commands/`, makes the shell scripts executable, and links `~/.claude/cc-statusline` to the clone (a stable path, so moving the repo only needs a re-run of the installer):
 
 ```bash
-bash ~/cc-statusline/install.sh
+bash <anywhere>/cc-statusline/install.sh
 ```
 
 **3. Wire it into Claude Code** — the installer prints a JSON snippet at the end; add it to `~/.claude/settings.json` (applies to every project) or to a project's `.claude/settings.local.json` (that project only, not committed to git):
@@ -49,7 +49,7 @@ bash ~/cc-statusline/install.sh
 {
   "statusLine": {
     "type": "command",
-    "command": "node /Users/you/cc-statusline/index.js",
+    "command": "node /Users/you/.claude/cc-statusline/index.js",
     "refreshInterval": 1
   }
 }
