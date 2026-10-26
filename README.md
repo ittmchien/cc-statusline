@@ -105,7 +105,7 @@ Same `/sl` command, but for the tunable numbers. **These already ship with sane 
 | `cacheTtlMs` | `30000` (30s) | How long the 7d/30d cost scan is cached before rescanning |
 | `jokeTtlMs` | `900000` (15min) | How long a batch of JokeAPI jokes is cached before refetching |
 | `jokeRotateMs` | `30000` (30s) | How often the joke line changes / alternates source |
-| `agentActiveMs` | `60000` (60s) | How long a subagent transcript's mtime silence still counts as "running" in the `⤷ Model` line |
+| `agentActiveMs` | `60000` (60s) | How long a subagent transcript's mtime silence still counts as "running" in the `⤷ [Model-effort]` list |
 | `barWidth` | `10` | Width (in characters) of the context/rate-limit progress bars |
 
 Same env-var fallback pattern as the boolean toggles: `CC_SL_CACHE_TTL_MS`, `CC_SL_JOKE_TTL_MS`, `CC_SL_JOKE_ROTATE_MS`, `CC_SL_AGENT_ACTIVE_MS`, `CC_SL_BAR_WIDTH` — the toggle file takes precedence when both are set.
