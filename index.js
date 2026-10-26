@@ -548,14 +548,19 @@ function shimmer(text) {
   return out + N;
 }
 
+// Family name ("Opus", "Sonnet", …) of a model id, or undefined if unknown.
+function modelFamily(id) {
+  if (/opus/i.test(id)) return 'Opus';
+  if (/sonnet/i.test(id)) return 'Sonnet';
+  if (/haiku/i.test(id)) return 'Haiku';
+  if (/fable/i.test(id)) return 'Fable';
+  return undefined;
+}
+
 function formatModel(id, display) {
   if (!id) return display || '';
-  let name;
-  if (/opus/i.test(id)) name = 'Opus';
-  else if (/sonnet/i.test(id)) name = 'Sonnet';
-  else if (/haiku/i.test(id)) name = 'Haiku';
-  else if (/fable/i.test(id)) name = 'Fable';
-  else return display || id.slice(0, 20);
+  const name = modelFamily(id);
+  if (!name) return display || id.slice(0, 20);
   const is1M = /1m/i.test(id) || /1m/i.test(display || '');
   const m = id.match(/(opus|sonnet|haiku|fable)-(\d+)-(\d+)/i);
   const version = m ? `${m[2]}.${m[3]}` : null;
@@ -881,12 +886,14 @@ if (SHOW_MODEL && modelId) {
     if (effortLevel) line2 += ` ${D}|${N} ${D}⚙${N} ${effortRgb(effortLevel)}${effortLevel}${N}`;
   }
   // Append models of currently-running subagents, each colored by its own tier
-  // (the ⤷ arrow and separators stay dim), e.g. "◆ Fable 5 ⤷ Opus 4.8 - high";
-  // the effort suffix follows the same `effort` toggle as the main model's.
+  // (the ⤷ arrow, brackets and separators stay dim), e.g. "◆ Fable 5 ⤷ [Opus-high]";
+  // family name only (no version) keeps the bracket short; the effort suffix
+  // follows the same `effort` toggle as the main model's.
   const agentModels = getActiveAgentModels(data.transcript_path)
-    .map(({ model, effort }) => `${modelTierRgb(model, '')}${formatModel(model, '')}${N}`
-      + (SHOW_EFFORT && effort ? ` ${D}-${N} ${effortRgb(effort)}${effort}${N}` : ''));
-  if (agentModels.length) line2 += ` ${D}⤷${N} ${agentModels.join(`${D}, ${N}`)}`;
+    .map(({ model, effort }) => `${D}[${N}${modelTierRgb(model, '')}${modelFamily(model) ?? formatModel(model, '')}${N}`
+      + (SHOW_EFFORT && effort ? `${D}-${N}${effortRgb(effort)}${effort}${N}` : '')
+      + `${D}]${N}`);
+  if (agentModels.length) line2 += ` ${D}⤷${N} ${agentModels.join(' ')}`;
 }
 
 let turnSeg = '';
