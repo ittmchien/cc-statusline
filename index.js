@@ -879,14 +879,15 @@ if (SHOW_MODEL && modelId) {
   const effortLevel = SHOW_EFFORT ? data.effort?.level : undefined;
   if (isUltracode()) {
     // Feature: ultracode shimmer — rainbow-animate the whole model+effort text.
-    line2 = shimmer(`◆ ${ms}${effortLevel ? ` | ⚙ ${effortLevel}` : ''}`);
+    line2 = shimmer(`◆ ${ms}${effortLevel ? ` ⚙ ${effortLevel}` : ''}`);
   } else {
-    // Feature: per-tier model color (falls back to B), effort gets a dim separator + icon.
+    // Feature: per-tier model color (falls back to B), effort gets a dim icon.
     line2 = `${modelTierRgb(modelId, modelDisplay)}◆ ${ms}${N}`;
-    if (effortLevel) line2 += ` ${D}|${N} ${D}⚙${N} ${effortRgb(effortLevel)}${effortLevel}${N}`;
+    if (effortLevel) line2 += ` ${D}⚙${N} ${effortRgb(effortLevel)}${effortLevel}${N}`;
   }
   // Append models of currently-running subagents, each colored by its own tier
-  // (the ⤷ arrow, brackets and separators stay dim), e.g. "◆ Fable 5 ⤷ [Opus-high]";
+  // (the ⤷ arrow, brackets and separators stay dim; the arrow alone separates),
+  // e.g. "◆ Fable 5 ⚙ high ⤷ [Opus-high]";
   // family name only (no version) keeps the bracket short; the effort suffix
   // follows the same `effort` toggle as the main model's.
   const agentModels = getActiveAgentModels(data.transcript_path)
