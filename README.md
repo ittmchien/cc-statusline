@@ -12,7 +12,7 @@ Custom status line for [Claude Code](https://code.claude.com) — Remote Control
 
 `🔗 ✅/❌` shows whether this session is under [Remote Control](https://code.claude.com/docs/en/remote-control) (controllable from claude.ai/mobile). The statusline stdin JSON has no field for it, so it's detected from `~/.claude/sessions/<pid>.json` — a session file matching the current `session_id` (with a live pid) whose `bridgeSessionId` is non-null means active.
 
-`⤷ Haiku 4.5` appears next to the model name while a subagent is running, showing which model it runs on (detected from fresh `subagents/agent-*.jsonl` transcripts next to the session transcript; disappears ~60s after the agent stops writing).
+`⤷ Haiku 4.5 - high` appears next to the model name while a subagent is running, showing which model and reasoning effort it runs on (effort suffix follows the `effort` toggle; detected from fresh `subagents/agent-*.jsonl` transcripts next to the session transcript; disappears ~60s after the agent stops writing).
 
 `today` sums the current **local** calendar day's cost/tokens from the same transcript scan as the 7d/30d totals (day buckets align to local midnight, not UTC).
 

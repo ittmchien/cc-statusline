@@ -383,24 +383,35 @@ function getSessionTokens(transcriptPath) {
 // Subagent transcripts live in <dir>/<session_id>/subagents/agent-*.jsonl
 // next to the main transcript. A fresh mtime means that agent is (very
 // likely) still running; the last "model" occurrence in its tail says which
-// model it runs on. ponytail: mtime freshness is a heuristic — there is no
-// explicit running/finished signal in these files.
+// model it runs on, the last "effort" its reasoning effort. ponytail: mtime
+// freshness is a heuristic — there is no explicit running/finished signal in
+// these files.
 const AGENT_ACTIVE_MS = configNumber('agentActiveMs', 'CC_SL_AGENT_ACTIVE_MS', 60 * 1000);
 
+// Last `"key":"value"` string value in a JSONL tail, or undefined.
+function lastJsonString(text, key) {
+  const marker = `"${key}":"`;
+  const idx = text.lastIndexOf(marker);
+  if (idx === -1) return undefined;
+  const end = text.indexOf('"', idx + marker.length);
+  return end > idx ? text.slice(idx + marker.length, end) : undefined;
+}
+
+// Feature: returns [{ model, effort }] per distinct running model+effort pair.
 function getActiveAgentModels(transcriptPath) {
   if (!transcriptPath) return [];
   const dir = path.join(path.dirname(transcriptPath),
     path.basename(transcriptPath, '.jsonl'), 'subagents');
   let names;
   try { names = fs.readdirSync(dir); } catch (_) { return []; }
-  const models = new Set();
+  const agents = new Map();
   for (const name of names) {
     if (!name.endsWith('.jsonl')) continue;
     const full = path.join(dir, name);
     let stat;
     try { stat = fs.statSync(full); } catch (_) { continue; }
     if (Date.now() - stat.mtimeMs > AGENT_ACTIVE_MS) continue;
-    // Tail read only — the last assistant line is what carries the model.
+    // Tail read only — the last assistant line is what carries model + effort.
     let tail = '';
     try {
       const fd = fs.openSync(full, 'r');
@@ -410,12 +421,12 @@ function getActiveAgentModels(transcriptPath) {
       fs.closeSync(fd);
       tail = buf.toString('utf8');
     } catch (_) { continue; }
-    const idx = tail.lastIndexOf('"model":"');
-    if (idx === -1) continue;
-    const end = tail.indexOf('"', idx + 9);
-    if (end > idx) models.add(tail.slice(idx + 9, end));
+    const model = lastJsonString(tail, 'model');
+    if (!model) continue;
+    const effort = lastJsonString(tail, 'effort');
+    agents.set(`${model}|${effort ?? ''}`, { model, effort });
   }
-  return [...models];
+  return [...agents.values()];
 }
 
 // ---------- Ultracode detection (shimmer trigger) ----------
@@ -870,9 +881,11 @@ if (SHOW_MODEL && modelId) {
     if (effortLevel) line2 += ` ${D}|${N} ${D}⚙${N} ${effortRgb(effortLevel)}${effortLevel}${N}`;
   }
   // Append models of currently-running subagents, each colored by its own tier
-  // (the ⤷ arrow and separators stay dim), e.g. "◆ Fable 5 ⤷ Opus 4.8".
+  // (the ⤷ arrow and separators stay dim), e.g. "◆ Fable 5 ⤷ Opus 4.8 - high";
+  // the effort suffix follows the same `effort` toggle as the main model's.
   const agentModels = getActiveAgentModels(data.transcript_path)
-    .map((id) => `${modelTierRgb(id, '')}${formatModel(id, '')}${N}`);
+    .map(({ model, effort }) => `${modelTierRgb(model, '')}${formatModel(model, '')}${N}`
+      + (SHOW_EFFORT && effort ? ` ${D}-${N} ${effortRgb(effort)}${effort}${N}` : ''));
   if (agentModels.length) line2 += ` ${D}⤷${N} ${agentModels.join(`${D}, ${N}`)}`;
 }
 

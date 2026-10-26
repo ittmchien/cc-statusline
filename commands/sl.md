@@ -16,7 +16,7 @@ Boolean keys (on/off, or omit the value to flip):
 - `funny` — the joke line (local list + JokeAPI, alternating)
 - `jokeapi` — the JokeAPI half of the rotation specifically (off = local jokes only, no network calls)
 - `model` — the ◆ model name (colored per pricing tier)
-- `effort` — the effort-level word after the model name (color-scaled low→max)
+- `effort` — the effort-level word after the model name and after each running subagent's model (color-scaled low→max)
 - `context` — the 🧠 context-window usage bar
 - `net` — the 🌐 ↑sent ↓received bytes of this session's `claude` process (macOS `nettop`), also saved to `~/.claude/state/net-usage/<session_id>.json`
 - `turn` — the ⚡ current/just-finished prompt-turn cost (plus 🪙 tokens when `tokens` is on)
