@@ -429,6 +429,37 @@ function getActiveAgentModels(transcriptPath) {
   return [...agents.values()];
 }
 
+// ---------- Running Codex review ----------
+// Feature: true while a `codex-companion.mjs review|adversarial-review` process
+// (spawned by hooks/codex-review.sh) descends from this session's claude pid.
+// ponytail: one `ps` per render; filter by mode if other companion modes matter.
+const CODEX_REVIEW_RE = /codex-companion\.mjs\s+(review|adversarial-review)\b/;
+
+function isCodexReviewing(sessionId) {
+  const s = findLiveSession(sessionId);
+  if (!s) return false;
+  let out;
+  try {
+    out = execSync('ps -axo pid=,ppid=,command=',
+      { encoding: 'utf8', timeout: 1000, stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch (_) { return false; }
+  const parentOf = new Map();
+  const reviews = [];
+  for (const line of out.split('\n')) {
+    const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
+    if (!m) continue;
+    parentOf.set(m[1], m[2]);
+    if (CODEX_REVIEW_RE.test(m[3])) reviews.push(m[1]);
+  }
+  const claudePid = String(s.pid);
+  return reviews.some((pid) => {
+    for (let p = parentOf.get(pid); p && p !== '1'; p = parentOf.get(p)) {
+      if (p === claudePid) return true;
+    }
+    return false;
+  });
+}
+
 // ---------- Ultracode detection (shimmer trigger) ----------
 // Real session flag: the "ultracode" boolean settings key (toggled via /config
 // or --settings), not a prompt-keyword guess — merely mentioning the word in a
@@ -589,6 +620,7 @@ const BRANCH_EMOJI = {
   fix: '🐛', bugfix: '🐛',
   hotfix: '🚑️',
   release: '🔖',
+  deploy: '🚀',
   chore: '🔧',
   docs: '📝', doc: '📝',
   refactor: '♻️',
@@ -894,6 +926,8 @@ if (SHOW_MODEL && modelId) {
     .map(({ model, effort }) => `${D}[${N}${modelTierRgb(model, '')}${modelFamily(model) ?? formatModel(model, '')}${N}`
       + (SHOW_EFFORT && effort ? `${D}-${N}${effortRgb(effort)}${effort}${N}` : '')
       + `${D}]${N}`);
+  // Feature: a running Codex review joins the same list as a plain "[Codex]".
+  if (isCodexReviewing(data.session_id)) agentModels.push(`${D}[${N}${modelTierRgb('codex', '')}Codex${N}${D}]${N}`);
   if (agentModels.length) line2 += ` ${D}⤷${N} ${agentModels.join(' ')}`;
 }
 
